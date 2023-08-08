@@ -1,0 +1,134 @@
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --all-features
+Features: test-name=rust-rav1e:@
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable, flaky
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features aom-sys
+Features: test-name=librust-rav1e-dev:aom-sys
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features asm
+Features: test-name=librust-rav1e-dev:asm
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features av-metrics
+Features: test-name=librust-rav1e-dev:av-metrics
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features bench
+Features: test-name=librust-rav1e-dev:bench
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features binaries
+Features: test-name=librust-rav1e-dev:binaries
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features capi
+Features: test-name=librust-rav1e-dev:capi
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features cc
+Features: test-name=librust-rav1e-dev:cc
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features clap
+Features: test-name=librust-rav1e-dev:clap
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features console
+Features: test-name=librust-rav1e-dev:console
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features dav1d-sys
+Features: test-name=librust-rav1e-dev:dav1d-sys
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features decode_test
+Features: test-name=librust-rav1e-dev:decode_test
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable, flaky
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features decode_test_dav1d
+Features: test-name=librust-rav1e-dev:decode_test_dav1d
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable, flaky
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets
+Features: test-name=librust-rav1e-dev:default
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features fern
+Features: test-name=librust-rav1e-dev:fern
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features ivf
+Features: test-name=librust-rav1e-dev:ivf
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features nasm-rs
+Features: test-name=librust-rav1e-dev:nasm-rs
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features regex
+Features: test-name=librust-rav1e-dev:regex
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features scan_fmt
+Features: test-name=librust-rav1e-dev:scan_fmt
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features scenechange
+Features: test-name=librust-rav1e-dev:scenechange
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features serde
+Features: test-name=librust-rav1e-dev:serde
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features serialize
+Features: test-name=librust-rav1e-dev:serialize
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features signal-hook
+Features: test-name=librust-rav1e-dev:signal-hook
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features signal_support
+Features: test-name=librust-rav1e-dev:signal_support
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features toml
+Features: test-name=librust-rav1e-dev:toml
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features --features y4m
+Features: test-name=librust-rav1e-dev:y4m
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
+
+Test-Command: /usr/share/cargo/bin/cargo-auto-test rav1e 0.5.1 --all-targets --no-default-features
+Features: test-name=librust-rav1e-dev:
+Depends: dh-cargo (>= 18), librust-assert-cmd-2+default-dev, librust-interpolate-name-0.2+default-dev (>= 0.2.2-~~), librust-pretty-assertions-1+default-dev, librust-rand-0.8+default-dev, librust-rand-chacha-0.3+default-dev, librust-semver-1+default-dev, @
+Restrictions: allow-stderr, skip-not-installable
