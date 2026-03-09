@@ -8,22 +8,22 @@ Subject: Remove wasm feature
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -213,10 +213,6 @@
- [dependencies.v_frame]
- version = "0.3.3"
- 
--[dependencies.wasm-bindgen]
--version = "0.2.63"
--optional = true
--
- [dependencies.winnow]
- version = "=0.4.1"
- optional = true
-@@ -325,7 +321,6 @@
- signal_support = ["signal-hook"]
- threading = ["rayon/threads"]
+@@ -92,7 +92,6 @@
+     "dep:tracing",
+ ]
  unstable = []
 -wasm = ["wasm-bindgen"]
  
- [target."cfg(any(decode_test, decode_test_dav1d))".dependencies.system-deps]
- version = "6"
+ [lib]
+ name = "rav1e"
+@@ -271,10 +270,6 @@
+ [dependencies.v_frame]
+ version = "0.3.7"
+ 
+-[dependencies.wasm-bindgen]
+-version = "0.2.90"
+-optional = true
+-
+ [dependencies.y4m]
+ version = "0.8"
+ optional = true

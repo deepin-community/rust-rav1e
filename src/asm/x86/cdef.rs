@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -101,7 +101,7 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
             (func)(
               dst.data_ptr_mut() as *mut _,
               T::to_asm_stride(dst.plane_cfg.stride),
-              tmp.data.as_ptr().offset(3 * TMPSTRIDE) as *const u16,
+              tmp.data.as_ptr().offset(3 * TMPSTRIDE),
               TMPSTRIDE,
               pri_strength,
               sec_strength,
@@ -293,7 +293,6 @@ cpu_function_lookup_table!(
 mod test {
   pub const CDEF_HAVE_NONE: u8 = 0;
   use super::*;
-  use crate::frame::{AsRegion, Plane};
   use interpolate_name::interpolate_test;
   use rand::random;
   use std::str::FromStr;

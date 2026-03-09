@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,8 +7,18 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+use std::collections::VecDeque;
+use std::io::Write;
+use std::mem::MaybeUninit;
+use std::sync::Arc;
+use std::{fmt, io, mem};
+
+use arg_enum_proc_macro::ArgEnum;
+use arrayvec::*;
+use bitstream_io::{BigEndian, BitWrite, BitWriter};
+use rayon::iter::*;
+
 use crate::activity::*;
-use crate::api::config::GrainTableSegment;
 use crate::api::*;
 use crate::cdef::*;
 use crate::context::*;
@@ -37,19 +47,6 @@ use crate::tiling::*;
 use crate::transform::*;
 use crate::util::*;
 use crate::wasm_bindgen::*;
-
-use arg_enum_proc_macro::ArgEnum;
-use arrayvec::*;
-use bitstream_io::{BigEndian, BitWrite, BitWriter};
-use rust_hawktracer::*;
-
-use std::collections::VecDeque;
-use std::io::Write;
-use std::mem::MaybeUninit;
-use std::sync::Arc;
-use std::{fmt, io, mem};
-
-use crate::rayon::iter::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,18 +102,13 @@ impl<T: Pixel> ReferenceFramesSet<T> {
 
 #[wasm_bindgen]
 #[derive(
-  ArgEnum, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize,
+  ArgEnum, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default,
 )]
 #[repr(C)]
 pub enum Tune {
   Psnr,
+  #[default]
   Psychovisual,
-}
-
-impl Default for Tune {
-  fn default() -> Self {
-    Tune::Psychovisual
-  }
 }
 
 const FRAME_ID_LENGTH: u32 = 15;
@@ -154,11 +146,11 @@ pub struct Sequence {
   pub still_picture: bool,
   /// Use reduced header for still picture
   pub reduced_still_picture_hdr: bool,
-  /// enables/disables filter_intra
+  /// enables/disables `filter_intra`
   pub enable_filter_intra: bool,
   /// enables/disables corner/edge filtering and upsampling
   pub enable_intra_edge_filter: bool,
-  /// enables/disables interintra_compound
+  /// enables/disables `interintra_compound`
   pub enable_interintra_compound: bool,
   /// enables/disables masked compound
   pub enable_masked_compound: bool,
@@ -166,9 +158,9 @@ pub struct Sequence {
   /// 1 - enable vert/horiz filter selection
   pub enable_dual_filter: bool,
   /// 0 - disable order hint, and related tools
-  /// jnt_comp, ref_frame_mvs, frame_sign_bias
-  /// if 0, enable_jnt_comp and
-  /// enable_ref_frame_mvs must be set zs 0.
+  /// `jnt_comp`, `ref_frame_mvs`, `frame_sign_bias`
+  /// if 0, `enable_jnt_comp` and
+  /// `enable_ref_frame_mvs` must be set zs 0.
   pub enable_order_hint: bool,
   /// 0 - disable joint compound modes
   /// 1 - enable it
@@ -198,7 +190,7 @@ pub struct Sequence {
   pub display_model_info_present_flag: bool,
   pub decoder_model_info_present_flag: bool,
   pub level_idx: [u8; MAX_NUM_OPERATING_POINTS],
-  /// seq_tier in the spec. One bit: 0 or 1.
+  /// `seq_tier` in the spec. One bit: 0 or 1.
   pub tier: [usize; MAX_NUM_OPERATING_POINTS],
   pub film_grain_params_present: bool,
   pub timing_info_present: bool,
@@ -570,7 +562,7 @@ pub struct SegmentationState {
 }
 
 impl SegmentationState {
-  #[hawktracer(SegmentationState_update_threshold)]
+  #[profiling::function]
   pub fn update_threshold(&mut self, base_q_idx: u8, bd: usize) {
     let base_ac_q = ac_q(base_q_idx, 0, bd).get() as u64;
     let real_ac_q = ArrayVec::<_, MAX_SEGMENTS>::from_iter(
@@ -708,9 +700,9 @@ pub struct CodedFrameData<T: Pixel> {
   /// indicating how much future frames depend on the block (for example, via
   /// inter-prediction).
   pub block_importances: Box<[f32]>,
-  /// Pre-computed distortion_scale.
+  /// Pre-computed `distortion_scale`.
   pub distortion_scales: Box<[DistortionScale]>,
-  /// Pre-computed activity_scale.
+  /// Pre-computed `activity_scale`.
   pub activity_scales: Box<[DistortionScale]>,
   pub activity_mask: ActivityMask,
   /// Combined metric of activity and distortion
@@ -748,7 +740,7 @@ impl<T: Pixel> CodedFrameData<T> {
 
   // Assumes that we have already computed activity scales and distortion scales
   // Returns -0.5 log2(mean(scale))
-  #[hawktracer(compute_spatiotemporal_scores)]
+  #[profiling::function]
   pub fn compute_spatiotemporal_scores(&mut self) -> i64 {
     let mut scores = self
       .distortion_scales
@@ -774,13 +766,13 @@ impl<T: Pixel> CodedFrameData<T> {
 
   // Assumes that we have already computed distortion_scales
   // Returns -0.5 log2(mean(scale))
-  #[hawktracer(compute_temporal_scores)]
+  #[profiling::function]
   pub fn compute_temporal_scores(&mut self) -> i64 {
     let inv_mean = DistortionScale::inv_mean(&self.distortion_scales);
     for scale in self.distortion_scales.iter_mut() {
       *scale *= inv_mean;
     }
-    self.spatiotemporal_scores = self.distortion_scales.clone();
+    self.spatiotemporal_scores.clone_from(&self.distortion_scales);
     inv_mean.blog64() >> 1
   }
 
@@ -994,7 +986,7 @@ impl<T: Pixel> FrameInvariants<T> {
     let show_existing_frame =
       inter_cfg.get_show_existing_frame(fi.idx_in_group_output);
     if !show_existing_frame {
-      fi.coded_frame_data = previous_coded_fi.coded_frame_data.clone();
+      fi.coded_frame_data.clone_from(&previous_coded_fi.coded_frame_data);
     }
 
     fi.order_hint =
@@ -1361,17 +1353,29 @@ fn write_key_frame_obus<T: Pixel>(
 
 /// Write into `dst` the difference between the blocks at `src1` and `src2`
 fn diff<T: Pixel>(
-  dst: &mut [i16], src1: &PlaneRegion<'_, T>, src2: &PlaneRegion<'_, T>,
+  dst: &mut [MaybeUninit<i16>], src1: &PlaneRegion<'_, T>,
+  src2: &PlaneRegion<'_, T>,
 ) {
   debug_assert!(dst.len() % src1.rect().width == 0);
+  debug_assert_eq!(src1.rows_iter().count(), src1.rect().height);
 
-  for ((l, s1), s2) in dst
-    .chunks_exact_mut(src1.rect().width)
-    .zip(src1.rows_iter())
-    .zip(src2.rows_iter())
+  let width = src1.rect().width;
+  let height = src1.rect().height;
+
+  if width == 0
+    || width != src2.rect().width
+    || height == 0
+    || src1.rows_iter().len() != src2.rows_iter().len()
+  {
+    debug_assert!(false);
+    return;
+  }
+
+  for ((l, s1), s2) in
+    dst.chunks_exact_mut(width).zip(src1.rows_iter()).zip(src2.rows_iter())
   {
     for ((r, v1), v2) in l.iter_mut().zip(s1).zip(s2) {
-      *r = i16::cast_from(*v1) - i16::cast_from(*v2);
+      r.write(i16::cast_from(*v1) - i16::cast_from(*v2));
     }
   }
 }
@@ -1469,7 +1473,9 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
 
   if mode.is_intra() {
     let bit_depth = fi.sequence.bit_depth;
+    let mut edge_buf = Aligned::uninit_array();
     let edge_buf = get_intra_edges(
+      &mut edge_buf,
       &rec.as_const(),
       tile_partition_bo,
       bx,
@@ -1501,25 +1507,19 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
   }
 
   let coded_tx_area = av1_get_coded_tx_size(tx_size).area();
-  // SAFETY: We write to the array below before reading from it.
-  let mut residual_storage: Aligned<[i16; 64 * 64]> =
-    unsafe { Aligned::uninitialized() };
-  // SAFETY: We write to the array below before reading from it.
-  let mut coeffs_storage: Aligned<[T::Coeff; 64 * 64]> =
-    unsafe { Aligned::uninitialized() };
-  // SAFETY: We write to the array below before reading from it.
-  let mut qcoeffs_storage: Aligned<[MaybeUninit<T::Coeff>; 32 * 32]> =
-    unsafe { Aligned::uninitialized() };
-  // SAFETY: We write to the array below before reading from it.
-  let mut rcoeffs_storage: Aligned<[T::Coeff; 32 * 32]> =
-    unsafe { Aligned::uninitialized() };
-  let residual = &mut residual_storage.data[..tx_size.area()];
-  let coeffs = &mut coeffs_storage.data[..tx_size.area()];
+  let mut residual = Aligned::<[MaybeUninit<i16>; 64 * 64]>::uninit_array();
+  let mut coeffs = Aligned::<[MaybeUninit<T::Coeff>; 64 * 64]>::uninit_array();
+  let mut qcoeffs =
+    Aligned::<[MaybeUninit<T::Coeff>; 32 * 32]>::uninit_array();
+  let mut rcoeffs =
+    Aligned::<[MaybeUninit<T::Coeff>; 32 * 32]>::uninit_array();
+  let residual = &mut residual.data[..tx_size.area()];
+  let coeffs = &mut coeffs.data[..tx_size.area()];
   let qcoeffs = init_slice_repeat_mut(
-    &mut qcoeffs_storage.data[..coded_tx_area],
+    &mut qcoeffs.data[..coded_tx_area],
     T::Coeff::cast_from(0),
   );
-  let rcoeffs = &mut rcoeffs_storage.data[..coded_tx_area];
+  let rcoeffs = &mut rcoeffs.data[..coded_tx_area];
 
   let (visible_tx_w, visible_tx_h) = clip_visible_bsize(
     (fi.width + xdec) >> xdec,
@@ -1536,8 +1536,10 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
       &rec.subregion(area),
     );
   } else {
-    residual.fill(0);
+    residual.fill(MaybeUninit::new(0));
   }
+  // SAFETY: `diff()` inits `tx_size.area()` elements when it matches size of `subregion(area)`
+  let residual = unsafe { slice_assume_init_mut(residual) };
 
   forward_transform(
     residual,
@@ -1548,6 +1550,8 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
     fi.sequence.bit_depth,
     fi.cpu_feature_level,
   );
+  // SAFETY: forward_transform initialized coeffs
+  let coeffs = unsafe { slice_assume_init_mut(coeffs) };
 
   let eob = ts.qc.quantize(coeffs, qcoeffs, tx_size, tx_type);
 
@@ -1593,6 +1597,8 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
     fi.ac_delta_q[p],
     fi.cpu_feature_level,
   );
+  // SAFETY: dequantize initialized rcoeffs
+  let rcoeffs = unsafe { slice_assume_init_mut(rcoeffs) };
 
   if eob == 0 {
     // All zero coefficients is a no-op
@@ -1657,7 +1663,7 @@ pub fn encode_tx_block<T: Pixel, W: Writer>(
 /// # Panics
 ///
 /// - If the block size is invalid for subsampling
-#[hawktracer(motion_compensate)]
+#[profiling::function]
 pub fn motion_compensate<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, luma_mode: PredictionMode, ref_frames: [RefType; 2],
@@ -1886,7 +1892,7 @@ pub fn save_block_motion<T: Pixel>(
   }
 }
 
-#[hawktracer(encode_block_pre_cdef)]
+#[profiling::function]
 pub fn encode_block_pre_cdef<T: Pixel, W: Writer>(
   seq: &Sequence, ts: &TileStateMut<'_, T>, cw: &mut ContextWriter, w: &mut W,
   bsize: BlockSize, tile_bo: TileBlockOffset, skip: bool,
@@ -1927,7 +1933,7 @@ pub fn encode_block_pre_cdef<T: Pixel, W: Writer>(
 ///
 /// - If chroma and luma do not match for inter modes
 /// - If an invalid motion vector is found
-#[hawktracer(encode_block_post_cdef)]
+#[profiling::function]
 pub fn encode_block_post_cdef<T: Pixel, W: Writer>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, w: &mut W, luma_mode: PredictionMode,
@@ -2245,11 +2251,14 @@ pub fn write_tx_blocks<T: Pixel, W: Writer>(
   let bw = bsize.width_mi() / tx_size.width_mi();
   let bh = bsize.height_mi() / tx_size.height_mi();
   let qidx = get_qidx(fi, ts, cw, tile_bo);
-  assert_ne!(qidx, 0); // lossless is not yet supported
+
+  // TODO: Lossless is not yet supported.
+  if !skip {
+    assert_ne!(qidx, 0);
+  }
 
   let PlaneConfig { xdec, ydec, .. } = ts.input.planes[1].cfg;
-  // SAFETY: We write to the array below before reading from it.
-  let mut ac: Aligned<[i16; 32 * 32]> = unsafe { Aligned::uninitialized() };
+  let mut ac = Aligned::<[MaybeUninit<i16>; 32 * 32]>::uninit_array();
   let mut partition_has_coeff: bool = false;
   let mut tx_dist = ScaledDistortion::zero();
   let do_chroma =
@@ -2291,7 +2300,7 @@ pub fn write_tx_blocks<T: Pixel, W: Writer>(
         po,
         skip,
         qidx,
-        &ac.data,
+        &[],
         IntraParam::AngleDelta(angle_delta.y),
         rdo_type,
         need_recon_pixel,
@@ -2328,9 +2337,11 @@ pub fn write_tx_blocks<T: Pixel, W: Writer>(
   bw_uv /= uv_tx_size.width_mi();
   bh_uv /= uv_tx_size.height_mi();
 
-  if chroma_mode.is_cfl() {
-    luma_ac(&mut ac.data, ts, tile_bo, bsize, tx_size, fi);
-  }
+  let ac_data = if chroma_mode.is_cfl() {
+    luma_ac(&mut ac.data, ts, tile_bo, bsize, tx_size, fi)
+  } else {
+    [].as_slice()
+  };
 
   let uv_tx_type = if uv_tx_size.width() >= 32 || uv_tx_size.height() >= 32 {
     TxType::DCT_DCT
@@ -2377,7 +2388,7 @@ pub fn write_tx_blocks<T: Pixel, W: Writer>(
           po,
           skip,
           qidx,
-          &ac.data,
+          ac_data,
           if chroma_mode.is_cfl() {
             IntraParam::Alpha(alpha)
           } else {
@@ -2552,7 +2563,7 @@ pub fn write_tx_tree<T: Pixel, W: Writer>(
   (partition_has_coeff, tx_dist)
 }
 
-#[hawktracer(encode_block_with_modes)]
+#[profiling::function]
 pub fn encode_block_with_modes<T: Pixel, W: Writer>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, w_pre_cdef: &mut W, w_post_cdef: &mut W,
@@ -2619,7 +2630,7 @@ pub fn encode_block_with_modes<T: Pixel, W: Writer>(
   );
 }
 
-#[hawktracer(encode_partition_bottomup)]
+#[profiling::function]
 fn encode_partition_bottomup<T: Pixel, W: Writer>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, w_pre_cdef: &mut W, w_post_cdef: &mut W,
@@ -2627,8 +2638,8 @@ fn encode_partition_bottomup<T: Pixel, W: Writer>(
   inter_cfg: &InterConfig, enc_stats: &mut EncoderStats,
 ) -> PartitionGroupParameters {
   let rdo_type = RDOType::PixelDistRealRate;
-  let mut rd_cost = std::f64::MAX;
-  let mut best_rd = std::f64::MAX;
+  let mut rd_cost = f64::MAX;
+  let mut best_rd = f64::MAX;
   let mut rdo_output = PartitionGroupParameters {
     rd_cost,
     part_type: PartitionType::PARTITION_INVALID,
@@ -2806,13 +2817,13 @@ fn encode_partition_bottomup<T: Pixel, W: Writer>(
         let cost = child_rdo_output.rd_cost;
         assert!(cost >= 0.0);
 
-        if cost != std::f64::MAX {
+        if cost != f64::MAX {
           rd_cost += cost;
           if !must_split
             && fi.enable_early_exit
             && (rd_cost >= best_rd || rd_cost >= ref_rd_cost)
           {
-            assert!(cost != std::f64::MAX);
+            assert!(cost != f64::MAX);
             early_exit = true;
             break;
           } else if partition != PartitionType::PARTITION_SPLIT {
@@ -2937,7 +2948,7 @@ fn encode_partition_topdown<T: Pixel, W: Writer>(
   let mut rdo_output =
     block_output.clone().unwrap_or_else(|| PartitionGroupParameters {
       part_type: PartitionType::PARTITION_INVALID,
-      rd_cost: std::f64::MAX,
+      rd_cost: f64::MAX,
       part_modes: ArrayVec::new(),
     });
 
@@ -2978,16 +2989,16 @@ fn encode_partition_topdown<T: Pixel, W: Writer>(
   match partition {
     PartitionType::PARTITION_NONE => {
       let rdo_decision;
-      let part_decision = if let Some(part_mode) = rdo_output.part_modes.get(0)
-      {
-        // The optimal prediction mode is known from a previous iteration
-        part_mode
-      } else {
-        // Make a prediction mode decision for blocks encoded with no rdo_partition_decision call (e.g. edges)
-        rdo_decision =
-          rdo_mode_decision(fi, ts, cw, bsize, tile_bo, inter_cfg);
-        &rdo_decision
-      };
+      let part_decision =
+        if let Some(part_mode) = rdo_output.part_modes.first() {
+          // The optimal prediction mode is known from a previous iteration
+          part_mode
+        } else {
+          // Make a prediction mode decision for blocks encoded with no rdo_partition_decision call (e.g. edges)
+          rdo_decision =
+            rdo_mode_decision(fi, ts, cw, bsize, tile_bo, inter_cfg);
+          &rdo_decision
+        };
 
       let mut mode_luma = part_decision.pred_mode_luma;
       let mut mode_chroma = part_decision.pred_mode_chroma;
@@ -3222,7 +3233,7 @@ fn get_initial_cdfcontext<T: Pixel>(fi: &FrameInvariants<T>) -> CDFContext {
   cdf.unwrap_or_else(|| CDFContext::new(fi.base_q_idx))
 }
 
-#[hawktracer(encode_tile_group)]
+#[profiling::function]
 fn encode_tile_group<T: Pixel>(
   fi: &FrameInvariants<T>, fs: &mut FrameState<T>, inter_cfg: &InterConfig,
 ) -> Vec<u8> {
@@ -3324,7 +3335,7 @@ fn encode_tile_group<T: Pixel>(
     fs.cdfs.reset_counts();
   }
 
-  let max_tile_size_bytes = ((ILog::ilog(max_len) + 7) / 8) as u32;
+  let max_tile_size_bytes = ILog::ilog(max_len).div_ceil(8) as u32;
   debug_assert!(max_tile_size_bytes > 0 && max_tile_size_bytes <= 4);
   fs.max_tile_size_bytes = max_tile_size_bytes;
 
@@ -3361,7 +3372,7 @@ pub struct SBSQueueEntry {
   pub w_post_cdef: WriterBase<WriterRecorder>,
 }
 
-#[hawktracer(check_lf_queue)]
+#[profiling::function]
 fn check_lf_queue<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, w: &mut WriterBase<WriterEncoder>,
@@ -3453,7 +3464,7 @@ fn check_lf_queue<T: Pixel>(
   }
 }
 
-#[hawktracer(encode_tile)]
+#[profiling::function]
 fn encode_tile<'a, T: Pixel>(
   fi: &FrameInvariants<T>, ts: &'a mut TileStateMut<'_, T>,
   fc: &'a mut CDFContext, blocks: &'a mut TileBlocksMut<'a>,
@@ -3509,7 +3520,7 @@ fn encode_tile<'a, T: Pixel>(
           &mut sbs_qe.w_post_cdef,
           BlockSize::BLOCK_64X64,
           tile_bo,
-          std::f64::MAX,
+          f64::MAX,
           inter_cfg,
           &mut enc_stats,
         );
@@ -3678,7 +3689,7 @@ fn write_tile_group_header(tile_start_and_end_present_flag: bool) -> Vec<u8> {
 /// # Panics
 ///
 /// - If the frame packets cannot be written
-#[hawktracer(encode_show_existing_frame)]
+#[profiling::function]
 pub fn encode_show_existing_frame<T: Pixel>(
   fi: &FrameInvariants<T>, fs: &mut FrameState<T>, inter_cfg: &InterConfig,
 ) -> Vec<u8> {
@@ -3753,7 +3764,7 @@ fn get_initial_segmentation<T: Pixel>(
 /// # Panics
 ///
 /// - If the frame packets cannot be written
-#[hawktracer(encode_frame)]
+#[profiling::function]
 pub fn encode_frame<T: Pixel>(
   fi: &FrameInvariants<T>, fs: &mut FrameState<T>, inter_cfg: &InterConfig,
 ) -> Vec<u8> {

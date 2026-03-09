@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2020-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -100,7 +100,7 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
         CDEF_FILTER_FNS[cpu.as_index()][decimate_index(xdec, ydec)],
       ) {
         (Some(pad), Some(func)) => {
-          let h = if ydec == 1 { 4 } else { 8 } as i32;
+          let h = if ydec == 1 { 4 } else { 8 };
           let tmpstride = if xdec == 1 { 8 } else { 16 } as isize;
           const MAXTMPSTRIDE: isize = 16;
           const TMPSIZE: usize = (12 * MAXTMPSTRIDE + 8) as usize;
@@ -132,10 +132,10 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
           // rows (that is, src.x, src.y-2).  It does _not_ point to
           // src.x-2, src.y-2.
           (pad)(
-            tmp.data.as_mut_ptr().offset(2 * tmpstride + 8) as *mut u16,
+            tmp.data.as_mut_ptr().offset(2 * tmpstride + 8),
             src as *const u8,
             T::to_asm_stride(src_stride as usize),
-            left.data.as_ptr() as *const [u8; 2],
+            left.data.as_ptr(),
             top as *const u8,
             bottom as *const u8,
             8 >> ydec,
@@ -145,7 +145,7 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
           (func)(
             dst.data_ptr_mut() as *mut u8,
             T::to_asm_stride(dst.plane_cfg.stride),
-            tmp.data.as_ptr().offset(2 * tmpstride + 8) as *const u16,
+            tmp.data.as_ptr().offset(2 * tmpstride + 8),
             pri_strength,
             sec_strength,
             dir as i32,
@@ -167,7 +167,7 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
         // clause using Rust macros.  See comments above for
         // indexing/addressing notes.
         (Some(pad), Some(func)) => {
-          let h = if ydec == 1 { 4 } else { 8 } as i32;
+          let h = if ydec == 1 { 4 } else { 8 };
           let tmpstride = if xdec == 1 { 8 } else { 16 } as isize;
           const MAXTMPSTRIDE: isize = 16;
           const TMPSIZE: usize = (12 * MAXTMPSTRIDE + 8) as usize;
@@ -187,10 +187,10 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
           }
 
           (pad)(
-            tmp.data.as_mut_ptr().offset(2 * tmpstride + 8) as *mut u16,
+            tmp.data.as_mut_ptr().offset(2 * tmpstride + 8),
             src as *const u16,
             T::to_asm_stride(src_stride as usize),
-            left.data.as_ptr() as *const [u16; 2],
+            left.data.as_ptr(),
             top as *const u16,
             bottom as *const u16,
             8 >> ydec,
@@ -200,7 +200,7 @@ pub(crate) unsafe fn cdef_filter_block<T: Pixel>(
           (func)(
             dst.data_ptr_mut() as *mut u16,
             T::to_asm_stride(dst.plane_cfg.stride),
-            tmp.data.as_ptr().offset(2 * tmpstride + 8) as *const u16,
+            tmp.data.as_ptr().offset(2 * tmpstride + 8),
             pri_strength,
             sec_strength,
             dir as i32,
@@ -370,7 +370,7 @@ pub(crate) fn cdef_find_dir<T: Pixel>(
             img.as_ptr() as *const _,
             T::to_asm_stride(img.plane.cfg.stride),
             var as *mut u32,
-            (1 << coeff_shift + 8) - 1,
+            (1 << (coeff_shift + 8)) - 1,
           )
         }
       } else {

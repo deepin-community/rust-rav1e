@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -45,7 +45,7 @@ impl CDFContext {
   }
 }
 
-impl<'a> ContextWriter<'a> {
+impl ContextWriter<'_> {
   fn get_ref_frame_ctx_b0(&self, bo: TileBlockOffset) -> usize {
     let ref_counts = self.bc.blocks[bo].neighbors_ref_counts;
 

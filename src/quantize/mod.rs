@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -24,7 +24,6 @@ pub use tables::*;
 use crate::scan_order::av1_scan_orders;
 use crate::transform::{TxSize, TxType};
 use crate::util::*;
-use std::convert::Into;
 use std::mem;
 use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
@@ -269,7 +268,7 @@ impl QuantizationContext {
   #[inline]
   pub fn quantize<T: Coefficient>(
     &self, coeffs: &[T], qcoeffs: &mut [T], tx_size: TxSize, tx_type: TxType,
-  ) -> usize {
+  ) -> u16 {
     let scan = av1_scan_orders[tx_size as usize][tx_type as usize].scan;
     let iscan = av1_scan_orders[tx_size as usize][tx_type as usize].iscan;
 
@@ -299,9 +298,9 @@ impl QuantizationContext {
         .unwrap_or(0);
       // We skip the DC coefficient since it has its own quantizer index.
       if eob_minus_one > 0 {
-        eob_minus_one as usize + 1
+        eob_minus_one + 1
       } else {
-        usize::from(qcoeffs[0] != T::cast_from(0))
+        u16::from(qcoeffs[0] != T::cast_from(0))
       }
     };
 
@@ -317,7 +316,7 @@ impl QuantizationContext {
     // that tail of zeroes and ones than we do for the larger coefficients.
     let mut level_mode = 1;
     let ac_quant = self.ac_quant.get() as u32;
-    for &pos in scan.iter().take(eob).skip(1) {
+    for &pos in scan.iter().take(usize::from(eob)).skip(1) {
       let coeff = i32::cast_from(coeffs[pos as usize]) << self.log_tx_scale;
       let abs_coeff = coeff.unsigned_abs();
 
@@ -344,7 +343,7 @@ impl QuantizationContext {
 
     // Check the eob is correct
     debug_assert_eq!(
-      eob,
+      usize::from(eob),
       scan
         .iter()
         .rposition(|&i| qcoeffs[i as usize] != T::cast_from(0))
@@ -359,10 +358,12 @@ impl QuantizationContext {
 pub mod rust {
   use super::*;
   use crate::cpu_features::CpuFeatureLevel;
+  use std::mem::MaybeUninit;
 
   pub fn dequantize<T: Coefficient>(
-    qindex: u8, coeffs: &[T], _eob: usize, rcoeffs: &mut [T], tx_size: TxSize,
-    bit_depth: usize, dc_delta_q: i8, ac_delta_q: i8, _cpu: CpuFeatureLevel,
+    qindex: u8, coeffs: &[T], _eob: u16, rcoeffs: &mut [MaybeUninit<T>],
+    tx_size: TxSize, bit_depth: usize, dc_delta_q: i8, ac_delta_q: i8,
+    _cpu: CpuFeatureLevel,
   ) {
     let log_tx_scale = get_log_tx_scale(tx_size) as i32;
     let offset = (1 << log_tx_scale) - 1;
@@ -376,7 +377,9 @@ pub mod rust {
       .enumerate()
     {
       let quant = if i == 0 { dc_quant } else { ac_quant };
-      *r = T::cast_from((c * quant + ((c >> 31) & offset)) >> log_tx_scale);
+      r.write(T::cast_from(
+        (c * quant + ((c >> 31) & offset)) >> log_tx_scale,
+      ));
     }
   }
 }

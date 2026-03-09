@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -411,9 +411,6 @@ macro_rules! plane_region_common {
       fn index(&self, index: usize) -> &Self::Output {
         assert!(index < self.rect.height);
         // SAFETY: The above assert ensures we do not access OOB data.
-        //
-        // FIXME: Remove `allow` once https://github.com/rust-lang/rust-clippy/issues/8264 fixed
-        #[allow(clippy::undocumented_unsafe_blocks)]
         unsafe {
           let ptr = self.data.add(index * self.plane_cfg.stride);
           slice::from_raw_parts(ptr, self.rect.width)
@@ -426,7 +423,7 @@ macro_rules! plane_region_common {
 plane_region_common!(PlaneRegion, as_ptr);
 plane_region_common!(PlaneRegionMut, as_mut_ptr, mut);
 
-impl<'a, T: Pixel> PlaneRegionMut<'a, T> {
+impl<T: Pixel> PlaneRegionMut<'_, T> {
   #[inline(always)]
   pub fn data_ptr_mut(&mut self) -> *mut T {
     self.data

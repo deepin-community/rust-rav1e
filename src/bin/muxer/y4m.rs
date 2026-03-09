@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -9,11 +9,10 @@
 
 use crate::decoder::VideoDetails;
 use rav1e::prelude::*;
-use rust_hawktracer::*;
 use std::io::Write;
 use std::slice;
 
-#[hawktracer(write_y4m_frame)]
+#[profiling::function]
 pub fn write_y4m_frame<T: Pixel>(
   y4m_enc: &mut y4m::Encoder<Box<dyn Write + Send>>, rec: &Frame<T>,
   y4m_details: VideoDetails,

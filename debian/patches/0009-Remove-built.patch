@@ -1,32 +1,32 @@
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -228,10 +228,6 @@
- [dev-dependencies.semver]
- version = "1.0"
- 
--[build-dependencies.built]
--version = "0.5.2"
--features = []
--
- [build-dependencies.cc]
- version = "1.0"
- features = ["parallel"]
-@@ -270,9 +266,7 @@
+@@ -64,9 +64,7 @@
      "asm",
      "threading",
      "signal_support",
 -    "git_version",
  ]
 -git_version = ["built/git2"]
- scenechange = []
  serialize = [
      "serde",
+     "toml",
+@@ -255,10 +253,6 @@
+ [dev-dependencies.semver]
+ version = "1.0"
+ 
+-[build-dependencies.built]
+-version = "0.8.0"
+-features = []
+-
+ [build-dependencies.cc]
+ version = "1.0"
+ features = ["parallel"]
 --- a/build.rs
 +++ b/build.rs
-@@ -251,8 +251,6 @@
- fn main() {
-   rustc_version_check();
+@@ -246,8 +246,6 @@
  
+ #[allow(unused_variables)]
+ fn main() {
 -  built::write_built_file().expect("Failed to acquire build-time information");
 -
    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
@@ -34,9 +34,9 @@
    // let env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
 --- a/src/bin/common.rs
 +++ b/src/bin/common.rs
-@@ -22,11 +22,6 @@
- use std::io::prelude::*;
+@@ -24,11 +24,6 @@
  use std::path::PathBuf;
+ use std::sync::OnceLock;
  
 -pub mod built_info {
 -  // The file has been placed there by the build script.
@@ -46,9 +46,9 @@
  #[derive(Clap)]
  #[clap(
    name = "rav1e",
-@@ -275,8 +270,8 @@
+@@ -295,8 +290,8 @@
      format!(
-       "{}\n{} {}\nCompiled CPU Features: {}\nAssembly: {}\nThreading: {}\nUnstable Features: {}\nCompiler Flags: {}",
+       "{}\n{} {}\nCompiled CPU Features: {}\nRuntime Assembly Support: {}{}\nThreading: {}\nUnstable Features: {}\nCompiler Flags: {}",
        get_version(),
 -      built_info::RUSTC_VERSION,
 -      built_info::TARGET,
@@ -56,12 +56,12 @@
 +      "unknown target",
        option_env!("CARGO_CFG_TARGET_FEATURE").unwrap_or("(None)"),
        if cfg!(feature = "asm") { "Enabled" } else { "Disabled" },
-       if cfg!(feature = "threading") { "Enabled" } else { "Disabled" },
+       if cfg!(feature = "asm") {
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -77,11 +77,6 @@
- #[macro_use]
- extern crate log;
+@@ -49,11 +49,6 @@
+ pub use crate::frame::Frame;
+ pub use crate::util::{CastFromPrimitive, Pixel, PixelType};
  
 -pub(crate) mod built_info {
 -  // The file has been placed there by the build script.

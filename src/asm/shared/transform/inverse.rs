@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -9,31 +9,30 @@
 
 use crate::tiling::PlaneRegionMut;
 use crate::util::*;
+use std::mem::MaybeUninit;
 
 // Note: Input coeffs are mutable since the assembly uses them as a scratchpad
 pub type InvTxfmFunc =
   unsafe extern fn(*mut u8, libc::ptrdiff_t, *mut i16, i32);
 
 pub type InvTxfmHBDFunc =
-  unsafe extern fn(*mut u16, libc::ptrdiff_t, *mut i16, i32);
+  unsafe extern fn(*mut u16, libc::ptrdiff_t, *mut i16, i32, i32);
 
 pub fn call_inverse_func<T: Pixel>(
   func: InvTxfmFunc, input: &[T::Coeff], output: &mut PlaneRegionMut<'_, T>,
-  eob: usize, width: usize, height: usize, bd: usize,
+  eob: u16, width: usize, height: usize, bd: usize,
 ) {
   debug_assert!(bd == 8);
 
   // Only use at most 32 columns and 32 rows of input coefficients.
   let input: &[T::Coeff] = &input[..width.min(32) * height.min(32)];
 
-  // SAFETY: We write to the array below before reading from it.
-  let mut copied: Aligned<[T::Coeff; 32 * 32]> =
-    unsafe { Aligned::uninitialized() };
+  let mut copied = Aligned::<[MaybeUninit<T::Coeff>; 32 * 32]>::uninit_array();
 
   // Convert input to 16-bits.
   // TODO: Remove by changing inverse assembly to not overwrite its input
   for (a, b) in copied.data.iter_mut().zip(input) {
-    *a = *b;
+    a.write(*b);
   }
 
   // perform the inverse transform
@@ -50,20 +49,18 @@ pub fn call_inverse_func<T: Pixel>(
 
 pub fn call_inverse_hbd_func<T: Pixel>(
   func: InvTxfmHBDFunc, input: &[T::Coeff],
-  output: &mut PlaneRegionMut<'_, T>, eob: usize, width: usize, height: usize,
-  _bd: usize,
+  output: &mut PlaneRegionMut<'_, T>, eob: u16, width: usize, height: usize,
+  bd: usize,
 ) {
   // Only use at most 32 columns and 32 rows of input coefficients.
   let input: &[T::Coeff] = &input[..width.min(32) * height.min(32)];
 
-  // SAFETY: We write to the array below before reading from it.
-  let mut copied: Aligned<[T::Coeff; 32 * 32]> =
-    unsafe { Aligned::uninitialized() };
+  let mut copied = Aligned::<[MaybeUninit<T::Coeff>; 32 * 32]>::uninit_array();
 
   // Convert input to 16-bits.
   // TODO: Remove by changing inverse assembly to not overwrite its input
   for (a, b) in copied.data.iter_mut().zip(input) {
-    *a = *b;
+    a.write(*b);
   }
 
   // perform the inverse transform
@@ -74,6 +71,7 @@ pub fn call_inverse_hbd_func<T: Pixel>(
       T::to_asm_stride(output.plane_cfg.stride),
       copied.data.as_mut_ptr() as *mut _,
       eob as i32 - 1,
+      (1 << bd) - 1,
     );
   }
 }
@@ -87,11 +85,11 @@ pub mod test {
   use crate::scan_order::av1_scan_orders;
   use crate::transform::TxSize::*;
   use crate::transform::*;
-  use rand::{random, thread_rng, Rng};
+  use rand::{random, rng, Rng};
 
   pub fn pick_eob<T: Coefficient>(
     coeffs: &mut [T], tx_size: TxSize, tx_type: TxType, sub_h: usize,
-  ) -> usize {
+  ) -> u16 {
     /* From dav1d
      * copy the topleft coefficients such that the return value (being the
      * coefficient scantable index for the eob token) guarantees that only
@@ -102,13 +100,13 @@ pub mod test {
     let coeff_h = av1_get_coded_tx_size(tx_size).height();
     let sub_high: usize = if sub_h > 0 { sub_h * 8 - 1 } else { 0 };
     let sub_low: usize = if sub_h > 1 { sub_high - 8 } else { 0 };
-    let mut eob = 0;
+    let mut eob = 0u16;
     let mut exit = 0;
 
-    let scan = av1_scan_orders[tx_size as usize][tx_type as usize].scan;
+    let scan = av1_scan_orders[tx_size][tx_type].scan;
 
     for (i, &pos) in scan.iter().enumerate() {
-      exit = i;
+      exit = i as u16;
 
       let rc = pos as usize;
       let rcx = rc % coeff_h;
@@ -117,14 +115,14 @@ pub mod test {
       if rcx > sub_high || rcy > sub_high {
         break;
       } else if eob == 0 && (rcx > sub_low || rcy > sub_low) {
-        eob = i;
+        eob = i as u16;
       }
     }
 
     if eob != 0 {
-      eob += thread_rng().gen_range(0..(exit - eob).min(1));
+      eob += rng().random_range(0..(exit - eob).min(1));
     }
-    for &pos in scan.iter().skip(eob) {
+    for &pos in scan.iter().skip(usize::from(eob)) {
       coeffs[pos as usize] = T::cast_from(0);
     }
 
@@ -145,22 +143,24 @@ pub mod test {
     for sub_h in 0..sub_h_iterations {
       let mut src_storage = [T::zero(); 64 * 64];
       let src = &mut src_storage[..tx_size.area()];
-      let mut dst = Plane::from_slice(&vec![T::zero(); 64 * 64], 64);
-      // SAFETY: We write to the array below before reading from it.
-      let mut res_storage: Aligned<[i16; 64 * 64]> =
-        unsafe { Aligned::uninitialized() };
-      let res = &mut res_storage.data[..tx_size.area()];
-      // SAFETY: We write to the array below before reading from it.
-      let mut freq_storage: Aligned<[T::Coeff; 64 * 64]> =
-        unsafe { Aligned::uninitialized() };
-      let freq = &mut freq_storage.data[..tx_size.area()];
+      let mut dst = Plane::from_slice(
+        &[T::zero(); 64 * 64][..tx_size.area()],
+        tx_size.width(),
+      );
+      let mut res = Aligned::<[MaybeUninit<i16>; 64 * 64]>::uninit_array();
+      let res = &mut res.data[..tx_size.area()];
+      let mut freq =
+        Aligned::<[MaybeUninit<T::Coeff>; 64 * 64]>::uninit_array();
+      let freq = &mut freq.data[..tx_size.area()];
       for ((r, s), d) in
         res.iter_mut().zip(src.iter_mut()).zip(dst.data.iter_mut())
       {
         *s = T::cast_from(random::<u16>() >> (16 - bit_depth));
         *d = T::cast_from(random::<u16>() >> (16 - bit_depth));
-        *r = i16::cast_from(*s) - i16::cast_from(*d);
+        r.write(i16::cast_from(*s) - i16::cast_from(*d));
       }
+      // SAFETY: The loop just initialized res, and all three slices have the same length
+      let res = unsafe { slice_assume_init_mut(res) };
       forward_transform(
         res,
         freq,
@@ -170,8 +170,10 @@ pub mod test {
         bit_depth,
         CpuFeatureLevel::RUST,
       );
+      // SAFETY: forward_transform initialized freq
+      let freq = unsafe { slice_assume_init_mut(freq) };
 
-      let eob: usize = pick_eob(freq, tx_size, tx_type, sub_h);
+      let eob: u16 = pick_eob(freq, tx_size, tx_type, sub_h);
       let mut rust_dst = dst.clone();
 
       inverse_transform_add(
@@ -223,12 +225,15 @@ pub mod test {
     };
 
     ($TYPES64:tt, $DIMS64:tt, $TYPES32:tt, $DIMS32:tt, $TYPES16:tt, $DIMS16:tt,
-     $TYPES84:tt, $DIMS84:tt) => {
+     $TYPES84:tt, $DIMS84:tt, $TYPES4:tt, $DIMS4:tt) => {
       test_itx_fns!([$TYPES64], $DIMS64);
       test_itx_fns!([$TYPES64, $TYPES32], $DIMS32);
       test_itx_fns!([$TYPES64, $TYPES32, $TYPES16], $DIMS16);
       test_itx_fns!(
         [$TYPES64, $TYPES32, $TYPES16, $TYPES84], $DIMS84
+      );
+      test_itx_fns!(
+        [$TYPES64, $TYPES32, $TYPES16, $TYPES84, $TYPES4], $DIMS4
       );
     };
   }
@@ -254,13 +259,16 @@ pub mod test {
       (TxType::FLIPADST_FLIPADST, flipadst, flipadst)
     ],
     [(16, 16)],
-    // 8x, 4x and 16x (minus 16x16)
+    // 8x, 4x and 16x (minus 16x16 and 4x4)
     [
       (TxType::V_ADST, adst, identity),
       (TxType::H_ADST, identity, adst),
       (TxType::V_FLIPADST, flipadst, identity),
       (TxType::H_FLIPADST, identity, flipadst)
     ],
-    [(16, 8), (8, 16), (16, 4), (4, 16), (8, 8), (8, 4), (4, 8), (4, 4)]
+    [(16, 8), (8, 16), (16, 4), (4, 16), (8, 8), (8, 4), (4, 8)],
+    // 4x4
+    [(TxType::WHT_WHT, wht, wht)],
+    [(4, 4)]
   );
 }

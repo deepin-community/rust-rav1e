@@ -1,5 +1,5 @@
 // Copyright (c) 2001-2016, Alliance for Open Media. All rights reserved
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -121,7 +121,7 @@ pub struct WriterBase<S> {
   #[cfg(feature = "desync_finder")]
   /// Debug enable flag
   debug: bool,
-  /// Extra offset added to tell() and tell_frac() to approximate costs
+  /// Extra offset added to `tell()` and `tell_frac()` to approximate costs
   /// of actually coding a symbol
   fake_bits_frac: u32,
   /// Use-specific storage
@@ -512,10 +512,10 @@ where
   ///
   /// - `s`: The index of the symbol to encode.
   /// - `cdf`: The CDF, such that symbol s falls in the range
-  ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
-  ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be greater than 32704. There should be at most 16 values.
-  ///       The lower 6 bits of the last value hold the count.
+  ///   `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
+  ///   The values must be monotonically non-decreasing, and the last value
+  ///   must be greater than 32704. There should be at most 16 values.
+  ///   The lower 6 bits of the last value hold the count.
   #[inline(always)]
   fn symbol<const CDF_LEN: usize>(&mut self, s: u32, cdf: &[u16; CDF_LEN]) {
     debug_assert!(cdf[cdf.len() - 1] < (1 << EC_PROB_SHIFT));
@@ -541,10 +541,10 @@ where
   ///
   /// - `s`: The index of the symbol to encode.
   /// - `cdf`: The CDF, such that symbol s falls in the range
-  ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
-  ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be greater 32704. There should be at most 16 values.
-  ///       The lower 6 bits of the last value hold the count.
+  ///   `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
+  ///   The values must be monotonically non-decreasing, and the last value
+  ///   must be greater 32704. There should be at most 16 values.
+  ///   The lower 6 bits of the last value hold the count.
   fn symbol_with_update<const CDF_LEN: usize>(
     &mut self, s: u32, cdf: CDFOffset<CDF_LEN>, log: &mut CDFContextLog,
     fc: &mut CDFContext,
@@ -565,10 +565,10 @@ where
   ///
   /// - `s`: The index of the symbol to encode.
   /// - `cdf`: The CDF, such that symbol s falls in the range
-  ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
-  ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be greater than 32704. There should be at most 16 values.
-  ///       The lower 6 bits of the last value hold the count.
+  ///   `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
+  ///   The values must be monotonically non-decreasing, and the last value
+  ///   must be greater than 32704. There should be at most 16 values.
+  ///   The lower 6 bits of the last value hold the count.
   fn symbol_bits(&self, s: u32, cdf: &[u16]) -> u32 {
     let mut bits = 0;
     debug_assert!(cdf[cdf.len() - 1] < (1 << EC_PROB_SHIFT));
@@ -761,7 +761,6 @@ where
   /// - `n`: size of interval
   /// - `k`: "parameter"
   /// - `r`: reference
-
   fn count_signed_subexp_with_ref(
     &self, v: i32, low: i32, high: i32, k: u8, r: i32,
   ) -> u32 {
@@ -864,10 +863,10 @@ impl<W: io::Write> BCodeWriter for BitWriter<W, BigEndian> {
       let l = 16 - n.leading_zeros() as u8;
       let m = (1 << l) - n;
       if v < m {
-        self.write(l as u32 - 1, v)
+        self.write_var(l as u32 - 1, v)
       } else {
-        self.write(l as u32 - 1, m + ((v - m) >> 1))?;
-        self.write(1, (v - m) & 1)
+        self.write_var(l as u32 - 1, m + ((v - m) >> 1))?;
+        self.write::<1, u16>((v - m) & 1)
       }
     } else {
       Ok(())
@@ -891,7 +890,7 @@ impl<W: io::Write> BCodeWriter for BitWriter<W, BigEndian> {
           i += 1;
           mk += a;
         } else {
-          return self.write(b as u32, v - mk);
+          return self.write_var(b as u32, v - mk);
         }
       }
     }

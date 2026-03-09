@@ -8,25 +8,17 @@ Subject: Remove benches
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -72,11 +72,6 @@
-     "unstable",
- ]
+@@ -332,13 +332,6 @@
+ [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.assert_cmd]
+ version = "2.0"
  
--[[bench]]
--name = "bench"
--path = "benches/bench.rs"
--harness = false
+-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.criterion]
+-version = "0.6"
 -
- [dependencies.aom-sys]
- version = "0.3.2"
+-[target.'cfg(target_arch = "wasm32")'.dev-dependencies.criterion]
+-version = "0.6"
+-default-features = false
+-
+ [target."cfg(unix)".dependencies.signal-hook]
+ version = "0.3"
  optional = true
-@@ -236,9 +231,6 @@
- [dev-dependencies.assert_cmd]
- version = "=2.0.8"
- 
--[dev-dependencies.criterion]
--version = "0.4"
--
- [dev-dependencies.interpolate_name]
- version = "0.2.2"
- 

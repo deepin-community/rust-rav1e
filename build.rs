@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -10,12 +10,10 @@
 #![allow(clippy::print_literal)]
 #![allow(clippy::unused_io_amount)]
 
-use rustc_version::{version, version_meta, Channel, Version};
 #[allow(unused_imports)]
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::exit;
 
 #[allow(dead_code)]
 fn rerun_dir<P: AsRef<Path>>(dir: P) {
@@ -36,7 +34,6 @@ fn hash_changed(
 ) -> Option<([u8; 8], PathBuf)> {
   use std::collections::hash_map::DefaultHasher;
   use std::hash::Hasher;
-  use std::io::Read;
 
   let mut hasher = DefaultHasher::new();
 
@@ -47,19 +44,16 @@ fn hash_changed(
     .chain(std::iter::once(Path::new("build.rs")));
 
   for path in paths {
-    if let Ok(mut f) = std::fs::File::open(path) {
-      let mut buf = Vec::new();
-      f.read_to_end(&mut buf).unwrap();
-
+    if let Ok(buf) = std::fs::read(path) {
       hasher.write(&buf);
     } else {
       panic!("Cannot open {}", path.display());
     }
   }
 
-  let strip = env::var("STRIP").unwrap_or_else(|_| "strip".to_string());
-
-  hasher.write(strip.as_bytes());
+  if let Some(cmd) = strip_command() {
+    hasher.write(cmd.as_bytes());
+  }
 
   let hash = hasher.finish().to_be_bytes();
 
@@ -76,21 +70,24 @@ fn hash_changed(
 
 #[cfg(feature = "asm")]
 fn build_nasm_files() {
-  use std::fs::File;
-  use std::io::Write;
-  let out_dir = env::var("OUT_DIR").unwrap();
+  let mut config = "
+%pragma preproc sane_empty_expansion true
+%define private_prefix rav1e
+%define ARCH_X86_32 0
+%define ARCH_X86_64 1
+%define PIC 1
+%define STACK_ALIGNMENT 16
+%define HAVE_AVX512ICL 1
+"
+  .to_owned();
 
-  let dest_path = Path::new(&out_dir).join("config.asm");
-  let mut config_file = File::create(&dest_path).unwrap();
-  config_file.write(b"	%define private_prefix rav1e\n").unwrap();
-  config_file.write(b"	%define ARCH_X86_32 0\n").unwrap();
-  config_file.write(b" %define ARCH_X86_64 1\n").unwrap();
-  config_file.write(b"	%define PIC 1\n").unwrap();
-  config_file.write(b" %define STACK_ALIGNMENT 16\n").unwrap();
-  config_file.write(b" %define HAVE_AVX512ICL 1\n").unwrap();
   if env::var("CARGO_CFG_TARGET_VENDOR").unwrap() == "apple" {
-    config_file.write(b" %define PREFIX 1\n").unwrap();
+    config += "%define PREFIX 1\n";
   }
+
+  let out_dir = env::var("OUT_DIR").unwrap();
+  let dest_path = Path::new(&out_dir).join("config.asm");
+  std::fs::write(&dest_path, config).expect("can write config.asm");
 
   let asm_files = &[
     "src/x86/cdef_avx2.asm",
@@ -127,7 +124,6 @@ fn build_nasm_files() {
     "src/x86/mc16_sse.asm",
     "src/x86/me.asm",
     "src/x86/sad_avx.asm",
-    "src/x86/sad_plane.asm",
     "src/x86/sad_sse2.asm",
     "src/x86/satd.asm",
     "src/x86/satd16_avx2.asm",
@@ -138,20 +134,17 @@ fn build_nasm_files() {
   if let Some((hash, hash_path)) =
     hash_changed(asm_files, &out_dir, &dest_path)
   {
-    let mut config_include_arg = String::from("-I");
-    config_include_arg.push_str(&out_dir);
-    config_include_arg.push('/');
-    let mut nasm = nasm_rs::Build::new();
-    nasm.min_version(2, 14, 0);
-    for file in asm_files {
-      nasm.file(file);
-    }
-    nasm.flag(&config_include_arg);
-    nasm.flag("-Isrc/");
-    let obj = nasm.compile_objects().unwrap_or_else(|e| {
-      println!("cargo:warning={}", e);
-      panic!("NASM build failed. Make sure you have nasm installed or disable the \"asm\" feature.\n\
-        You can get NASM from https://nasm.us or your system's package manager.\n\nerror: {}", e);
+    let obj = nasm_rs::Build::new()
+      .min_version(2, 15, 0)
+      .include(&out_dir)
+      .include("src")
+      .files(asm_files)
+      .compile_objects()
+      .unwrap_or_else(|e| {
+        panic!("NASM build failed. Make sure you have nasm installed or disable the \"asm\" feature.\n\
+                You can get NASM from https://nasm.us or your system's package manager.\n\
+                \n\
+                error: {e}");
     });
 
     // cc is better at finding the correct archiver
@@ -163,48 +156,65 @@ fn build_nasm_files() {
 
     // Strip local symbols from the asm library since they
     // confuse the debugger.
-    fn strip<P: AsRef<Path>>(obj: P) {
-      let strip = env::var("STRIP").unwrap_or_else(|_| "strip".to_string());
-
-      let mut cmd = std::process::Command::new(strip);
-
-      cmd.arg("-x").arg(obj.as_ref());
-
-      let _ = cmd.output();
+    if let Some(strip) = strip_command() {
+      let _ = std::process::Command::new(strip)
+        .arg("-x")
+        .arg(Path::new(&out_dir).join("librav1easm.a"))
+        .status();
     }
-
-    strip(Path::new(&out_dir).join("librav1easm.a"));
 
     std::fs::write(hash_path, &hash[..]).unwrap();
   } else {
-    println!("cargo:rustc-link-search={}", out_dir);
+    println!("cargo:rustc-link-search={out_dir}");
   }
   println!("cargo:rustc-link-lib=static=rav1easm");
   rerun_dir("src/x86");
   rerun_dir("src/ext/x86");
 }
 
+fn strip_command() -> Option<String> {
+  let target = env::var("TARGET").expect("TARGET");
+  // follows Cargo's naming convention for the linker setting
+  let normalized_target = target.replace('-', "_").to_uppercase();
+  let explicit_strip =
+    env::var(format!("CARGO_TARGET_{normalized_target}_STRIP"))
+      .ok()
+      .or_else(|| env::var("STRIP").ok());
+  if explicit_strip.is_some() {
+    return explicit_strip;
+  }
+
+  // strip command is target-specific, e.g. macOS's strip breaks MUSL's archives
+  let host = env::var("HOST").expect("HOST");
+  if host != target {
+    return None;
+  }
+
+  Some("strip".into())
+}
+
 #[cfg(feature = "asm")]
 fn build_asm_files() {
-  use std::fs::File;
-  use std::io::Write;
-  let out_dir = env::var("OUT_DIR").unwrap();
+  let mut config = "
+#define PRIVATE_PREFIX rav1e_
+#define ARCH_AARCH64 1
+#define ARCH_ARM 0
+#define CONFIG_LOG 1
+#define HAVE_ASM 1
+"
+  .to_owned();
 
-  let dest_path = Path::new(&out_dir).join("config.h");
-  let mut config_file = File::create(&dest_path).unwrap();
   if env::var("CARGO_CFG_TARGET_VENDOR").unwrap() == "apple" {
-    config_file.write(b" #define PREFIX 1\n").unwrap();
+    config += "#define PREFIX 1\n";
   }
-  config_file.write(b" #define PRIVATE_PREFIX rav1e_\n").unwrap();
-  config_file.write(b" #define ARCH_AARCH64 1\n").unwrap();
-  config_file.write(b" #define ARCH_ARM 0\n").unwrap();
-  config_file.write(b" #define CONFIG_LOG 1 \n").unwrap();
-  config_file.write(b" #define HAVE_ASM 1\n").unwrap();
-  config_file.sync_all().unwrap();
+  let out_dir = env::var("OUT_DIR").unwrap();
+  let dest_path = Path::new(&out_dir).join("config.h");
+  std::fs::write(&dest_path, config).expect("can write config.h");
 
   let asm_files = &[
     "src/arm/64/cdef.S",
     "src/arm/64/cdef16.S",
+    "src/arm/64/cdef_dist.S",
     "src/arm/64/mc.S",
     "src/arm/64/mc16.S",
     "src/arm/64/itx.S",
@@ -213,6 +223,7 @@ fn build_asm_files() {
     "src/arm/64/ipred16.S",
     "src/arm/64/sad.S",
     "src/arm/64/satd.S",
+    "src/arm/64/sse.S",
     "src/arm/tables.S",
   ];
 
@@ -227,30 +238,14 @@ fn build_asm_files() {
 
     std::fs::write(hash_path, &hash[..]).unwrap();
   } else {
-    println!("cargo:rustc-link-search={}", out_dir);
+    println!("cargo:rustc-link-search={out_dir}");
     println!("cargo:rustc-link-lib=static=rav1e-aarch64");
   }
   rerun_dir("src/arm");
 }
 
-fn rustc_version_check() {
-  // This should match the version in the CI
-  // Make sure to updated README.md when this changes.
-  const REQUIRED_VERSION: &str = "1.60.0";
-  if version().unwrap() < Version::parse(REQUIRED_VERSION).unwrap() {
-    eprintln!("rav1e requires rustc >= {}.", REQUIRED_VERSION);
-    exit(1);
-  }
-
-  if version_meta().unwrap().channel == Channel::Nightly {
-    println!("cargo:rustc-cfg=nightly_rustc");
-  }
-}
-
 #[allow(unused_variables)]
 fn main() {
-  rustc_version_check();
-
   built::write_built_file().expect("Failed to acquire build-time information");
 
   let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
@@ -275,7 +270,7 @@ fn main() {
 
   println!("cargo:rustc-env=PROFILE={}", env::var("PROFILE").unwrap());
   if let Ok(value) = env::var("CARGO_CFG_TARGET_FEATURE") {
-    println!("cargo:rustc-env=CARGO_CFG_TARGET_FEATURE={}", value);
+    println!("cargo:rustc-env=CARGO_CFG_TARGET_FEATURE={value}");
   }
   println!(
     "cargo:rustc-env=CARGO_ENCODED_RUSTFLAGS={}",

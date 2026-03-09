@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -17,11 +17,12 @@ use crate::cpu_features::CpuFeatureLevel;
 use crate::quantize::*;
 use crate::transform::TxSize;
 use crate::util::*;
+use std::mem::MaybeUninit;
 
 type DequantizeFn = unsafe fn(
   qindex: u8,
   coeffs_ptr: *const i16,
-  _eob: usize,
+  _eob: u16,
   rcoeffs_ptr: *mut i16,
   tx_size: TxSize,
   bit_depth: usize,
@@ -37,10 +38,11 @@ cpu_function_lookup_table!(
 
 #[inline(always)]
 pub fn dequantize<T: Coefficient>(
-  qindex: u8, coeffs: &[T], eob: usize, rcoeffs: &mut [T], tx_size: TxSize,
-  bit_depth: usize, dc_delta_q: i8, ac_delta_q: i8, cpu: CpuFeatureLevel,
+  qindex: u8, coeffs: &[T], eob: u16, rcoeffs: &mut [MaybeUninit<T>],
+  tx_size: TxSize, bit_depth: usize, dc_delta_q: i8, ac_delta_q: i8,
+  cpu: CpuFeatureLevel,
 ) {
-  let call_rust = |rcoeffs: &mut [T]| {
+  let call_rust = |rcoeffs: &mut [MaybeUninit<T>]| {
     crate::quantize::rust::dequantize(
       qindex, coeffs, eob, rcoeffs, tx_size, bit_depth, dc_delta_q,
       ac_delta_q, cpu,
@@ -48,10 +50,9 @@ pub fn dequantize<T: Coefficient>(
   };
 
   #[cfg(any(feature = "check_asm", test))]
-  let ref_rcoeffs = {
+  let mut ref_rcoeffs = {
     let area = av1_get_coded_tx_size(tx_size).area();
-    let mut copy = vec![T::cast_from(0); area];
-    copy[..].copy_from_slice(&rcoeffs[..area]);
+    let mut copy = vec![MaybeUninit::new(T::cast_from(0)); area];
     call_rust(&mut copy);
     copy
   };
@@ -82,13 +83,15 @@ pub fn dequantize<T: Coefficient>(
   #[cfg(any(feature = "check_asm", test))]
   {
     let area = av1_get_coded_tx_size(tx_size).area();
-    assert_eq!(&rcoeffs[..area], &ref_rcoeffs[..]);
+    let rcoeffs = unsafe { slice_assume_init_mut(&mut rcoeffs[..area]) };
+    let ref_rcoeffs = unsafe { slice_assume_init_mut(&mut ref_rcoeffs[..]) };
+    assert_eq!(rcoeffs, ref_rcoeffs);
   }
 }
 
 #[target_feature(enable = "avx2")]
 unsafe fn dequantize_avx2(
-  qindex: u8, coeffs_ptr: *const i16, _eob: usize, rcoeffs_ptr: *mut i16,
+  qindex: u8, coeffs_ptr: *const i16, _eob: u16, rcoeffs_ptr: *mut i16,
   tx_size: TxSize, bit_depth: usize, dc_delta_q: i8, ac_delta_q: i8,
 ) {
   let log_tx_scale = _mm256_set1_epi32(get_log_tx_scale(tx_size) as i32);
@@ -155,12 +158,12 @@ unsafe fn dequantize_avx2(
 #[cfg(test)]
 mod test {
   use super::*;
-  use rand::distributions::{Distribution, Uniform};
-  use rand::{thread_rng, Rng};
+  use rand::distr::{Distribution, Uniform};
+  use rand::{rng, Rng};
 
   #[test]
   fn dequantize_test() {
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     use TxSize::*;
     let tx_sizes = [
@@ -172,29 +175,32 @@ mod test {
     let bd: usize = 8;
 
     for &tx_size in &tx_sizes {
-      let qindex: u8 = rng.gen_range((MINQ as u8)..(MAXQ as u8));
+      let qindex: u8 = rng.random_range((MINQ as u8)..(MAXQ as u8));
       let dc_quant = dc_q(qindex, 0, bd).get() as i16;
       let ac_quant = ac_q(qindex, 0, bd).get() as i16;
 
       // Test the min, max, and random eobs
       let eobs = {
-        let mut out = [0usize; 16];
+        let mut out = [0u16; 16];
         let area: usize = av1_get_coded_tx_size(tx_size).area();
         out[0] = 0;
-        out[1] = area;
+        out[1] = area as u16;
         for eob in out.iter_mut().skip(2) {
-          *eob = rng.gen_range(0..area);
+          *eob = rng.random_range(0..area as u16);
         }
         out
       };
 
       for &eob in &eobs {
         let mut qcoeffs = Aligned::new([0i16; 32 * 32]);
-        let mut rcoeffs = Aligned::new([0i16; 32 * 32]);
+        let mut rcoeffs = Aligned::new([MaybeUninit::new(0i16); 32 * 32]);
 
         // Generate quantized coefficients up to the eob
-        let between = Uniform::from(-i16::MAX..=i16::MAX);
-        for (i, qcoeff) in qcoeffs.data.iter_mut().enumerate().take(eob) {
+        // SAFETY: always correct
+        let between = Uniform::new_inclusive(-i16::MAX, i16::MAX).unwrap();
+        for (i, qcoeff) in
+          qcoeffs.data.iter_mut().enumerate().take(eob as usize)
+        {
           *qcoeff = between.sample(&mut rng)
             / if i == 0 { dc_quant } else { ac_quant };
         }

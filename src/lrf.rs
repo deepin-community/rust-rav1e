@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,13 +7,9 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
-cfg_if::cfg_if! {
-  if #[cfg(nasm_x86_64)] {
-    use crate::asm::x86::lrf::*;
-  } else {
-    use self::rust::*;
-  }
-}
+use std::cmp;
+use std::iter::FusedIterator;
+use std::ops::{Index, IndexMut};
 
 use crate::api::SGRComplexityLevel;
 use crate::color::ChromaSampling::Cs400;
@@ -24,10 +20,14 @@ use crate::frame::{
 };
 use crate::tiling::{Area, PlaneRegion, PlaneRegionMut, Rect};
 use crate::util::{clamp, CastFromPrimitive, ILog, Pixel};
-use rust_hawktracer::*;
-use std::cmp;
-use std::iter::FusedIterator;
-use std::ops::{Index, IndexMut};
+
+cfg_if::cfg_if! {
+  if #[cfg(nasm_x86_64)] {
+    use crate::asm::x86::lrf::*;
+  } else {
+    use self::rust::*;
+  }
+}
 
 pub const RESTORATION_TILESIZE_MAX_LOG2: usize = 8;
 
@@ -122,23 +122,23 @@ impl IntegralImageBuffer {
 }
 
 #[allow(unused)] // Wiener coming soon!
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum RestorationFilter {
+  #[default]
   None,
-  Wiener { coeffs: [[i8; 3]; 2] },
-  Sgrproj { set: u8, xqd: [i8; 2] },
-}
-
-impl Default for RestorationFilter {
-  fn default() -> RestorationFilter {
-    RestorationFilter::None
-  }
+  Wiener {
+    coeffs: [[i8; 3]; 2],
+  },
+  Sgrproj {
+    set: u8,
+    xqd: [i8; 2],
+  },
 }
 
 impl RestorationFilter {
   pub const fn notequal(self, cmp: RestorationFilter) -> bool {
     match self {
-      RestorationFilter::None {} => !matches!(cmp, RestorationFilter::None {}),
+      RestorationFilter::None => !matches!(cmp, RestorationFilter::None),
       RestorationFilter::Sgrproj { set, xqd } => {
         if let RestorationFilter::Sgrproj { set: set2, xqd: xqd2 } = cmp {
           !(set == set2 && xqd[0] == xqd2[0] && xqd[1] == xqd2[1])
@@ -526,7 +526,7 @@ impl<'a, T: Pixel> Iterator for HorzPaddedIter<'a, T> {
 impl<T: Pixel> ExactSizeIterator for HorzPaddedIter<'_, T> {}
 impl<T: Pixel> FusedIterator for HorzPaddedIter<'_, T> {}
 
-#[hawktracer(setup_integral_image)]
+#[profiling::function]
 pub fn setup_integral_image<T: Pixel>(
   integral_image_buffer: &mut IntegralImageBuffer,
   integral_image_stride: usize, crop_w: usize, crop_h: usize, stripe_w: usize,
@@ -626,7 +626,7 @@ pub fn setup_integral_image<T: Pixel>(
   }
 }
 
-#[hawktracer(sgrproj_stripe_filter)]
+#[profiling::function]
 pub fn sgrproj_stripe_filter<T: Pixel, U: Pixel>(
   set: u8, xqd: [i8; 2], fi: &FrameInvariants<T>,
   integral_image_buffer: &IntegralImageBuffer, integral_image_stride: usize,
@@ -843,7 +843,7 @@ pub fn sgrproj_stripe_filter<T: Pixel, U: Pixel>(
 
 // Input params follow the same rules as sgrproj_stripe_filter.
 // Inputs are relative to the colocated slice views.
-#[hawktracer(sgrproj_solve)]
+#[profiling::function]
 pub fn sgrproj_solve<T: Pixel>(
   set: u8, fi: &FrameInvariants<T>,
   integral_image_buffer: &IntegralImageBuffer, input: &PlaneRegion<'_, T>,
@@ -1095,7 +1095,7 @@ pub fn sgrproj_solve<T: Pixel>(
   }
 }
 
-#[hawktracer(wiener_stripe_filter)]
+#[profiling::function]
 fn wiener_stripe_filter<T: Pixel>(
   coeffs: [[i8; 3]; 2], fi: &FrameInvariants<T>, crop_w: usize, crop_h: usize,
   stripe_w: usize, stripe_h: usize, stripe_x: usize, stripe_y: isize,
@@ -1264,12 +1264,6 @@ pub struct RestorationPlaneConfig {
 pub struct RestorationPlane {
   pub cfg: RestorationPlaneConfig,
   pub units: FrameRestorationUnits,
-}
-
-#[derive(Clone, Default)]
-pub struct RestorationPlaneOffset {
-  pub row: usize,
-  pub col: usize,
 }
 
 impl RestorationPlane {
@@ -1484,7 +1478,7 @@ impl RestorationState {
     }
   }
 
-  #[hawktracer(lrf_filter_frame)]
+  #[profiling::function]
   pub fn lrf_filter_frame<T: Pixel>(
     &mut self, out: &mut Frame<T>, pre_cdef: &Frame<T>,
     fi: &FrameInvariants<T>,

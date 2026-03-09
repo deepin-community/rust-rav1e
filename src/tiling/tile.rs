@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -203,7 +203,7 @@ macro_rules! tile_common {
 tile_common!(Tile, PlaneRegion, iter);
 tile_common!(TileMut, PlaneRegionMut, iter_mut, mut);
 
-impl<'a, T: Pixel> TileMut<'a, T> {
+impl<T: Pixel> TileMut<'_, T> {
   #[inline(always)]
   pub fn as_const(&self) -> Tile<'_, T> {
     Tile {

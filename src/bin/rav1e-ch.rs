@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -6,37 +6,6 @@
 // obtain it at www.aomedia.org/license/software. If the Alliance for Open
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
-
-#![deny(bare_trait_objects)]
-#![allow(clippy::cast_lossless)]
-#![allow(clippy::cast_ptr_alignment)]
-#![allow(clippy::cognitive_complexity)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::verbose_bit_mask)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::many_single_char_names)]
-// Performance lints
-#![warn(clippy::linkedlist)]
-#![warn(clippy::missing_const_for_fn)]
-#![warn(clippy::mutex_integer)]
-#![warn(clippy::suboptimal_flops)]
-// Correctness lints
-#![warn(clippy::expl_impl_clone_on_copy)]
-#![warn(clippy::mem_forget)]
-#![warn(clippy::path_buf_push_overwrite)]
-// Clarity/formatting lints
-#![warn(clippy::map_flatten)]
-#![warn(clippy::mut_mut)]
-#![warn(clippy::needless_borrow)]
-#![warn(clippy::needless_continue)]
-#![warn(clippy::range_plus_one)]
-// Documentation lints
-#![warn(clippy::doc_markdown)]
-#![warn(clippy::missing_errors_doc)]
-#![warn(clippy::missing_panics_doc)]
-// FIXME: Temporarily disabled due to https://github.com/rust-lang/rust-clippy/issues/9142
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[macro_use]
 extern crate log;
@@ -314,17 +283,20 @@ fn do_encode<T: Pixel, D: Decoder>(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  #[cfg(feature = "tracing")]
-  use rust_hawktracer::*;
   init_logger();
 
   #[cfg(feature = "tracing")]
-  let instance = HawktracerInstance::new();
+  let (chrome_layer, _guard) =
+    tracing_chrome::ChromeLayerBuilder::new().build();
+
   #[cfg(feature = "tracing")]
-  let _listener = instance.create_listener(HawktracerListenerType::ToFile {
-    file_path: "trace.bin".into(),
-    buffer_size: 4096,
-  });
+  {
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing::subscriber::set_global_default(
+      tracing_subscriber::registry().with(chrome_layer),
+    )
+    .unwrap();
+  }
 
   run().map_err(|e| {
     error::print_error(&e);
@@ -377,7 +349,7 @@ fn init_logger() {
 cfg_if::cfg_if! {
   if #[cfg(any(target_os = "windows", target_arch = "wasm32"))] {
     fn print_rusage() {
-      eprintln!("Windows benchmarking is not supported currently.");
+      eprintln!("Resource usage reporting is not currently supported on this platform");
     }
   } else {
     fn print_rusage() {
@@ -595,7 +567,7 @@ fn run() -> Result<(), error::CliError> {
 
   let source = Source::new(cli.limit, y4m_dec);
 
-  if video_info.bit_depth == 8 {
+  if video_info.bit_depth == 8 && !cli.force_highbitdepth {
     do_encode::<u8, y4m::Decoder<Box<dyn Read + Send>>>(
       cfg,
       cli.verbose,

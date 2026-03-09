@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,10 +7,11 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+use std::mem::MaybeUninit;
+
 use super::*;
 
 use crate::predict::PredictionMode;
-use rust_hawktracer::*;
 
 pub const MAX_PLANES: usize = 3;
 
@@ -554,55 +555,55 @@ pub struct NMVContext {
 // lv_map
 pub static default_nmv_context: NMVContext = {
   NMVContext {
-    joints_cdf: cdf!(4096, 11264, 19328),
+    joints_cdf: cdf([4096, 11264, 19328]),
     padding: [0; 12],
     comps: [
       NMVComponent {
-        classes_cdf: cdf!(
-          28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767
-        ),
-        class0_fp_cdf: [cdf!(16384, 24576, 26624), cdf!(12288, 21248, 24128)],
-        fp_cdf: cdf!(8192, 17408, 21248),
-        sign_cdf: cdf!(128 * 128),
-        class0_hp_cdf: cdf!(160 * 128),
-        hp_cdf: cdf!(128 * 128),
-        class0_cdf: cdf!(216 * 128),
-        bits_cdf: [
-          cdf!(128 * 136),
-          cdf!(128 * 140),
-          cdf!(128 * 148),
-          cdf!(128 * 160),
-          cdf!(128 * 176),
-          cdf!(128 * 192),
-          cdf!(128 * 224),
-          cdf!(128 * 234),
-          cdf!(128 * 234),
-          cdf!(128 * 240),
-        ],
+        classes_cdf: cdf([
+          28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767,
+        ]),
+        class0_fp_cdf: cdf_2d([[16384, 24576, 26624], [12288, 21248, 24128]]),
+        fp_cdf: cdf([8192, 17408, 21248]),
+        sign_cdf: cdf([128 * 128]),
+        class0_hp_cdf: cdf([160 * 128]),
+        hp_cdf: cdf([128 * 128]),
+        class0_cdf: cdf([216 * 128]),
+        bits_cdf: cdf_2d([
+          [128 * 136],
+          [128 * 140],
+          [128 * 148],
+          [128 * 160],
+          [128 * 176],
+          [128 * 192],
+          [128 * 224],
+          [128 * 234],
+          [128 * 234],
+          [128 * 240],
+        ]),
         padding: [0; 5],
       },
       NMVComponent {
-        classes_cdf: cdf!(
-          28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767
-        ),
-        class0_fp_cdf: [cdf!(16384, 24576, 26624), cdf!(12288, 21248, 24128)],
-        fp_cdf: cdf!(8192, 17408, 21248),
-        sign_cdf: cdf!(128 * 128),
-        class0_hp_cdf: cdf!(160 * 128),
-        hp_cdf: cdf!(128 * 128),
-        class0_cdf: cdf!(216 * 128),
-        bits_cdf: [
-          cdf!(128 * 136),
-          cdf!(128 * 140),
-          cdf!(128 * 148),
-          cdf!(128 * 160),
-          cdf!(128 * 176),
-          cdf!(128 * 192),
-          cdf!(128 * 224),
-          cdf!(128 * 234),
-          cdf!(128 * 234),
-          cdf!(128 * 240),
-        ],
+        classes_cdf: cdf([
+          28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767,
+        ]),
+        class0_fp_cdf: cdf_2d([[16384, 24576, 26624], [12288, 21248, 24128]]),
+        fp_cdf: cdf([8192, 17408, 21248]),
+        sign_cdf: cdf([128 * 128]),
+        class0_hp_cdf: cdf([160 * 128]),
+        hp_cdf: cdf([128 * 128]),
+        class0_cdf: cdf([216 * 128]),
+        bits_cdf: cdf_2d([
+          [128 * 136],
+          [128 * 140],
+          [128 * 148],
+          [128 * 160],
+          [128 * 176],
+          [128 * 192],
+          [128 * 224],
+          [128 * 234],
+          [128 * 234],
+          [128 * 240],
+        ]),
         padding: [0; 5],
       },
     ],
@@ -675,7 +676,7 @@ impl IndexMut<PlaneBlockOffset> for FrameBlocks {
   }
 }
 
-impl<'a> ContextWriter<'a> {
+impl ContextWriter<'_> {
   pub fn get_cdf_intra_mode_kf(
     &self, bo: TileBlockOffset,
   ) -> &[u16; INTRA_MODES] {
@@ -1122,7 +1123,7 @@ impl<'a> ContextWriter<'a> {
     }
   }
 
-  #[hawktracer(setup_mvref_list)]
+  #[profiling::function]
   fn setup_mvref_list<T: Pixel>(
     &self, bo: TileBlockOffset, ref_frames: [RefType; 2],
     mv_stack: &mut ArrayVec<CandidateMV, 9>, bsize: BlockSize,
@@ -1781,7 +1782,7 @@ impl<'a> ContextWriter<'a> {
 
   pub fn write_coeffs_lv_map<T: Coefficient, W: Writer>(
     &mut self, w: &mut W, plane: usize, bo: TileBlockOffset, coeffs_in: &[T],
-    eob: usize, pred_mode: PredictionMode, tx_size: TxSize, tx_type: TxType,
+    eob: u16, pred_mode: PredictionMode, tx_size: TxSize, tx_type: TxType,
     plane_bsize: BlockSize, xdec: usize, ydec: usize,
     use_reduced_tx_set: bool, frame_clipped_txw: usize,
     frame_clipped_txh: usize,
@@ -1792,8 +1793,8 @@ impl<'a> ContextWriter<'a> {
     let is_inter = pred_mode >= PredictionMode::NEARESTMV;
 
     // Note: Both intra and inter mode uses inter scan order. Surprised?
-    let scan: &[u16] =
-      &av1_scan_orders[tx_size as usize][tx_type as usize].scan[..eob];
+    let scan: &[u16] = &av1_scan_orders[tx_size as usize][tx_type as usize]
+      .scan[..usize::from(eob)];
     let height = av1_get_coded_tx_size(tx_size).height();
 
     // Create a slice with coeffs in scan order
@@ -1858,11 +1859,10 @@ impl<'a> ContextWriter<'a> {
   }
 
   fn encode_eob<W: Writer>(
-    &mut self, eob: usize, tx_size: TxSize, tx_class: TxClass, txs_ctx: usize,
+    &mut self, eob: u16, tx_size: TxSize, tx_class: TxClass, txs_ctx: usize,
     plane_type: usize, w: &mut W,
   ) {
-    let mut eob_extra: u32 = 0;
-    let eob_pt = Self::get_eob_pos_token(eob, &mut eob_extra);
+    let (eob_pt, eob_extra) = Self::get_eob_pos_token(eob);
     let eob_multi_size: usize = tx_size.area_log2() - 4;
     let eob_multi_ctx: usize = usize::from(tx_class != TX_CLASS_2D);
 
@@ -1914,18 +1914,18 @@ impl<'a> ContextWriter<'a> {
   }
 
   fn encode_coeffs<T: Coefficient, W: Writer>(
-    &mut self, coeffs: &[T], levels: &mut [u8], scan: &[u16], eob: usize,
+    &mut self, coeffs: &[T], levels: &mut [u8], scan: &[u16], eob: u16,
     tx_size: TxSize, tx_class: TxClass, txs_ctx: usize, plane_type: usize,
     w: &mut W,
   ) {
-    // SAFETY: We write to the array below before reading from it.
-    let mut coeff_contexts: Aligned<[i8; MAX_CODED_TX_SQUARE]> =
-      unsafe { Aligned::uninitialized() };
+    let mut coeff_contexts =
+      Aligned::<[MaybeUninit<i8>; MAX_CODED_TX_SQUARE]>::uninit_array();
 
-    self.get_nz_map_contexts(
+    // get_nz_map_contexts sets coeff_contexts contiguously as a parallel array for scan, not in scan order
+    let coeff_contexts = self.get_nz_map_contexts(
       levels,
       scan,
-      eob as u16,
+      eob,
       tx_size,
       tx_class,
       &mut coeff_contexts.data,
@@ -1933,24 +1933,28 @@ impl<'a> ContextWriter<'a> {
 
     let bhl = Self::get_txb_bhl(tx_size);
 
-    for (c, (&pos, &v)) in scan.iter().zip(coeffs.iter()).enumerate().rev() {
+    let scan_with_ctx =
+      scan.iter().copied().zip(coeff_contexts.iter().copied());
+    for (c, ((pos, coeff_ctx), v)) in
+      scan_with_ctx.zip(coeffs.iter().copied()).enumerate().rev()
+    {
       let pos = pos as usize;
-      let coeff_ctx = coeff_contexts.data[pos];
+      let coeff_ctx = coeff_ctx as usize;
       let level = v.abs();
 
-      if c == eob - 1 {
+      if c == usize::from(eob) - 1 {
         symbol_with_update!(
           self,
           w,
           cmp::min(u32::cast_from(level), 3) - 1,
-          &self.fc.coeff_base_eob_cdf[txs_ctx][plane_type][coeff_ctx as usize]
+          &self.fc.coeff_base_eob_cdf[txs_ctx][plane_type][coeff_ctx]
         );
       } else {
         symbol_with_update!(
           self,
           w,
           cmp::min(u32::cast_from(level), 3),
-          &self.fc.coeff_base_cdf[txs_ctx][plane_type][coeff_ctx as usize]
+          &self.fc.coeff_base_cdf[txs_ctx][plane_type][coeff_ctx]
         );
       }
 

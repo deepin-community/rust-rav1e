@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -108,9 +108,6 @@ macro_rules! tile_restoration_units_common {
       fn index(&self, index: usize) -> &Self::Output {
         assert!(index < self.rows);
         // SAFETY: The above assert ensures we do not access OOB data.
-        //
-        // FIXME: Remove `allow` once https://github.com/rust-lang/rust-clippy/issues/8264 fixed
-        #[allow(clippy::undocumented_unsafe_blocks)]
         unsafe {
           let ptr = self.data.add(index * self.stride);
           slice::from_raw_parts(ptr, self.cols)
@@ -280,7 +277,7 @@ tile_restoration_plane_common!(
   mut
 );
 
-impl<'a> TileRestorationPlaneMut<'a> {
+impl TileRestorationPlaneMut<'_> {
   #[inline(always)]
   pub fn restoration_unit_mut(
     &mut self, sbo: TileSuperBlockOffset,
@@ -415,7 +412,7 @@ tile_restoration_state_common!(
   mut
 );
 
-impl<'a> TileRestorationStateMut<'a> {
+impl TileRestorationStateMut<'_> {
   #[inline(always)]
   pub const fn as_const(&self) -> TileRestorationState {
     TileRestorationState {

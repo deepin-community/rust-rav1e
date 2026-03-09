@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -25,19 +25,14 @@ const LUMA_PADDING: usize = SB_SIZE + FRAME_MARGIN;
 /// Override the frame type decision
 ///
 /// Only certain frame types can be selected.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, Default)]
 #[repr(C)]
 pub enum FrameTypeOverride {
   /// Do not force any decision.
+  #[default]
   No,
   /// Force the frame to be a Keyframe.
   Key,
-}
-
-impl Default for FrameTypeOverride {
-  fn default() -> Self {
-    FrameTypeOverride::No
-  }
 }
 
 /// Optional per-frame encoder parameters

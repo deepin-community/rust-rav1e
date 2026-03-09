@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,16 +7,15 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
-use crate::context::MAX_TX_SIZE;
 use crate::cpu_features::CpuFeatureLevel;
-use crate::partition::BlockSize;
+use crate::partition::{BlockSize, IntraEdge};
 use crate::predict::{
   rust, IntraEdgeFilterParameters, PredictionMode, PredictionVariant,
 };
 use crate::tiling::{PlaneRegion, PlaneRegionMut};
 use crate::transform::TxSize;
-use crate::util::Aligned;
 use crate::Pixel;
+use std::mem::MaybeUninit;
 use v_frame::pixel::PixelType;
 
 macro_rules! decl_angular_ipred_fn {
@@ -108,6 +107,7 @@ decl_angular_ipred_hbd_fn! {
   rav1e_ipred_smooth_16bpc_avx512icl,
   rav1e_ipred_z1_16bpc_ssse3,
   rav1e_ipred_z1_16bpc_avx2,
+  rav1e_ipred_z2_16bpc_ssse3,
   rav1e_ipred_z3_16bpc_ssse3,
   rav1e_ipred_z3_16bpc_avx2,
   rav1e_ipred_paeth_16bpc_ssse3,
@@ -144,7 +144,7 @@ macro_rules! decl_cfl_ac_fn {
     extern {
       $(
         fn $f(
-          ac: *mut i16, src: *const u8, stride: libc::ptrdiff_t,
+          ac: *mut MaybeUninit<i16>, src: *const u8, stride: libc::ptrdiff_t,
           w_pad: libc::c_int, h_pad: libc::c_int,
           width: libc::c_int, height: libc::c_int,
         );
@@ -167,7 +167,7 @@ macro_rules! decl_cfl_ac_hbd_fn {
     extern {
       $(
         fn $f(
-          ac: *mut i16, src: *const u16, stride: libc::ptrdiff_t,
+          ac: *mut MaybeUninit<i16>, src: *const u16, stride: libc::ptrdiff_t,
           w_pad: libc::c_int, h_pad: libc::c_int,
           width: libc::c_int, height: libc::c_int,
         );
@@ -240,7 +240,7 @@ pub fn dispatch_predict_intra<T: Pixel>(
   mode: PredictionMode, variant: PredictionVariant,
   dst: &mut PlaneRegionMut<'_, T>, tx_size: TxSize, bit_depth: usize,
   ac: &[i16], angle: isize, ief_params: Option<IntraEdgeFilterParameters>,
-  edge_buf: &Aligned<[T; 4 * MAX_TX_SIZE + 1]>, cpu: CpuFeatureLevel,
+  edge_buf: &IntraEdge<T>, cpu: CpuFeatureLevel,
 ) {
   let call_rust = |dst: &mut PlaneRegionMut<'_, T>| {
     rust::dispatch_predict_intra(
@@ -259,8 +259,7 @@ pub fn dispatch_predict_intra<T: Pixel>(
     match T::type_enum() {
       PixelType::U8 => {
         let dst_ptr = dst.data_ptr_mut() as *mut _;
-        let edge_ptr =
-          edge_buf.data.as_ptr().offset(2 * MAX_TX_SIZE as isize) as *const _;
+        let edge_ptr = edge_buf.top_left_ptr() as *const _;
         if cpu >= CpuFeatureLevel::AVX512ICL {
           match mode {
             PredictionMode::DC_PRED => {
@@ -553,8 +552,7 @@ pub fn dispatch_predict_intra<T: Pixel>(
       }
       PixelType::U16 => {
         let dst_ptr = dst.data_ptr_mut() as *mut _;
-        let edge_ptr =
-          edge_buf.data.as_ptr().offset(2 * MAX_TX_SIZE as isize) as *const _;
+        let edge_ptr = edge_buf.top_left_ptr() as *const _;
         let bd_max = (1 << bit_depth) - 1;
         if cpu >= CpuFeatureLevel::AVX512ICL {
           match mode {
@@ -804,12 +802,25 @@ pub fn dispatch_predict_intra<T: Pixel>(
               let angle_arg =
                 angle | (enable_ief << 10) | (ief_smooth_filter << 9);
 
+              // From dav1d, bw and bh are the frame width and height rounded to 8px units
+              let (bw, bh) = (
+                ((dst.plane_cfg.width + 7) >> 3) << 3,
+                ((dst.plane_cfg.height + 7) >> 3) << 3,
+              );
+              // From dav1d, dx and dy are the distance from the predicted block to the frame edge
+              let (dx, dy) = (
+                (bw as isize - dst.rect().x) as libc::c_int,
+                (bh as isize - dst.rect().y) as libc::c_int,
+              );
+
               if angle <= 90 {
                 rav1e_ipred_z1_16bpc_ssse3(
                   dst_ptr, stride, edge_ptr, w, h, angle_arg, 0, 0, bd_max,
                 );
               } else if angle < 180 {
-                call_rust(dst);
+                rav1e_ipred_z2_16bpc_ssse3(
+                  dst_ptr, stride, edge_ptr, w, h, angle_arg, dx, dy, bd_max,
+                );
               } else {
                 rav1e_ipred_z3_16bpc_ssse3(
                   dst_ptr, stride, edge_ptr, w, h, angle_arg, 0, 0, bd_max,
@@ -857,12 +868,15 @@ pub fn dispatch_predict_intra<T: Pixel>(
   }
 }
 
+// The implementation MUST inititialize all `ac` elements
 #[inline(always)]
 pub(crate) fn pred_cfl_ac<T: Pixel, const XDEC: usize, const YDEC: usize>(
-  ac: &mut [i16], luma: &PlaneRegion<'_, T>, bsize: BlockSize, w_pad: usize,
-  h_pad: usize, cpu: CpuFeatureLevel,
+  ac: &mut [MaybeUninit<i16>], luma: &PlaneRegion<'_, T>, bsize: BlockSize,
+  w_pad: usize, h_pad: usize, cpu: CpuFeatureLevel,
 ) {
-  let call_rust = |ac: &mut [i16]| {
+  debug_assert_eq!(ac.len(), bsize.area());
+
+  let call_rust = |ac: &mut [MaybeUninit<i16>]| {
     rust::pred_cfl_ac::<T, XDEC, YDEC>(ac, luma, bsize, w_pad, h_pad, cpu);
   };
 

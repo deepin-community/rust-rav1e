@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -11,6 +11,7 @@ use super::*;
 use crate::predict::PredictionMode;
 use crate::predict::PredictionMode::*;
 use crate::transform::TxType::*;
+use std::mem::MaybeUninit;
 
 pub const MAX_TX_SIZE: usize = 64;
 
@@ -522,7 +523,7 @@ pub struct TXB_CTX {
   pub dc_sign_ctx: usize,
 }
 
-impl<'a> ContextWriter<'a> {
+impl ContextWriter<'_> {
   /// # Panics
   ///
   /// - If an invalid combination of `tx_type` and `tx_size` is passed
@@ -798,21 +799,23 @@ impl<'a> ContextWriter<'a> {
     av1_get_coded_tx_size(tx_size).height_log2()
   }
 
+  /// Returns `(eob_pt, eob_extra)`
+  ///
   /// # Panics
   ///
   /// - If `eob` is prior to the start of the group
   #[inline]
-  pub fn get_eob_pos_token(eob: usize, extra: &mut u32) -> u32 {
+  pub fn get_eob_pos_token(eob: u16) -> (u32, u32) {
     let t = if eob < 33 {
-      eob_to_pos_small[eob] as u32
+      eob_to_pos_small[usize::from(eob)] as u32
     } else {
-      let e = cmp::min((eob - 1) >> 5, 16);
+      let e = usize::from(cmp::min((eob - 1) >> 5, 16));
       eob_to_pos_large[e] as u32
     };
     assert!(eob as i32 >= k_eob_group_start[t as usize] as i32);
-    *extra = eob as u32 - k_eob_group_start[t as usize] as u32;
+    let extra = eob as u32 - k_eob_group_start[t as usize] as u32;
 
-    t
+    (t, extra)
   }
 
   pub fn get_nz_mag(levels: &[u8], bhl: usize, tx_class: TxClass) -> usize {
@@ -903,25 +906,33 @@ impl<'a> ContextWriter<'a> {
     Self::get_nz_map_ctx_from_stats(stats, coeff_idx, bhl, tx_size, tx_class)
   }
 
-  pub fn get_nz_map_contexts(
+  /// `coeff_contexts_no_scan` is not in the scan order.
+  /// Value for `pos = scan[i]` is at `coeff[i]`, not at `coeff[pos]`.
+  pub fn get_nz_map_contexts<'c>(
     &self, levels: &mut [u8], scan: &[u16], eob: u16, tx_size: TxSize,
-    tx_class: TxClass, coeff_contexts: &mut [i8],
-  ) {
+    tx_class: TxClass, coeff_contexts_no_scan: &'c mut [MaybeUninit<i8>],
+  ) -> &'c mut [i8] {
     let bhl = Self::get_txb_bhl(tx_size);
     let area = av1_get_coded_tx_size(tx_size).area();
-    for i in 0..eob {
-      let pos = scan[i as usize];
-      coeff_contexts[pos as usize] = Self::get_nz_map_ctx(
+
+    let scan = &scan[..usize::from(eob)];
+    let coeffs = &mut coeff_contexts_no_scan[..usize::from(eob)];
+    for (i, (coeff, pos)) in
+      coeffs.iter_mut().zip(scan.iter().copied()).enumerate()
+    {
+      coeff.write(Self::get_nz_map_ctx(
         levels,
         pos as usize,
         bhl,
         area,
-        i as usize,
-        i == eob - 1,
+        i,
+        i == usize::from(eob) - 1,
         tx_size,
         tx_class,
-      ) as i8;
+      ) as i8);
     }
+    // SAFETY: every element has been initialized
+    unsafe { slice_assume_init_mut(coeffs) }
   }
 
   pub fn get_br_ctx(

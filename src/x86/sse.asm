@@ -1,4 +1,4 @@
-; Copyright (c) 2020, The rav1e contributors. All rights reserved
+; Copyright (c) 2020-2022, The rav1e contributors. All rights reserved
 ;
 ; This source code is subject to the terms of the BSD 2 Clause License and
 ; the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -441,7 +441,8 @@ cglobal weighted_sse_%1x%2, 6, 10, 9, \
 %endif
     RET
 
-    %undef sum, kernel_width, res
+    %undef sum
+    %undef kernel_width
 %endmacro
 
 INIT_XMM ssse3

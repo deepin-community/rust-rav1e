@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -18,12 +18,13 @@ pub fn init_slice_repeat_mut<T: Copy>(
   }
 
   // SAFETY: Defined behavior, since all elements of slice are initialized
-  unsafe { assume_slice_init_mut(slice) }
+  unsafe { slice_assume_init_mut(slice) }
 }
 
-/// Assume all the elements are initialized
-pub unsafe fn assume_slice_init_mut<T: Copy>(
+/// Assume all the elements are initialized.
+#[inline(always)]
+pub unsafe fn slice_assume_init_mut<T: Copy>(
   slice: &'_ mut [MaybeUninit<T>],
 ) -> &'_ mut [T] {
-  &mut *(slice as *mut [std::mem::MaybeUninit<T>] as *mut [T])
+  &mut *(slice as *mut [MaybeUninit<T>] as *mut [T])
 }

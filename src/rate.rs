@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,6 +7,8 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+use std::cmp;
+
 use crate::api::color::ChromaSampling;
 use crate::api::ContextInner;
 use crate::encoder::TEMPORAL_DELIMITER;
@@ -14,8 +16,6 @@ use crate::quantize::{ac_q, dc_q, select_ac_qi, select_dc_qi};
 use crate::util::{
   bexp64, bexp_q24, blog64, clamp, q24_to_q57, q57, q57_to_q24, Pixel,
 };
-use rust_hawktracer::*;
-use std::cmp;
 
 // The number of frame sub-types for which we track distinct parameters.
 // This does not include FRAME_SUBTYPE_SEF, because we don't need to do any
@@ -557,7 +557,7 @@ impl QuantizerParameters {
 
     // delta_q only gets 6 bits + a sign bit, so it can differ by 63 at most.
     let min_qi = base_q_idx.saturating_sub(63).max(1);
-    let max_qi = base_q_idx.saturating_add(63).min(255);
+    let max_qi = base_q_idx.saturating_add(63);
     let clamp_qi = |qi: u8| qi.clamp(min_qi, max_qi);
 
     QuantizerParameters {
@@ -720,7 +720,7 @@ impl RCState {
   }
 
   // TODO: Separate quantizers for Cb and Cr.
-  #[hawktracer(select_qi)]
+  #[profiling::function]
   pub(crate) fn select_qi<T: Pixel>(
     &self, ctx: &ContextInner<T>, output_frameno: u64, fti: usize,
     maybe_prev_log_base_q: Option<i64>, log_isqrt_mean_scale: i64,
@@ -1069,7 +1069,7 @@ impl RCState {
     (log_base_q, log_q)
   }
 
-  #[hawktracer(RCState_update_state)]
+  #[profiling::function]
   pub fn update_state(
     &mut self, bits: i64, fti: usize, show_frame: bool, log_target_q: i64,
     trial: bool, droppable: bool,
@@ -1206,7 +1206,7 @@ impl RCState {
       }
       if !trial {
         // Increment the frame count for filter adaptation purposes.
-        if !trial && self.nframes[fti] < ::std::i32::MAX {
+        if !trial && self.nframes[fti] < i32::MAX {
           self.nframes[fti] += 1;
         }
         self.reservoir_fullness -= bits;
@@ -1303,11 +1303,11 @@ impl RCState {
     }
     // If we have encoded too many frames, prevent us from reaching the
     //  ready state required to encode more.
-    if self.nencoded_frames + self.nsef_frames >= std::i32::MAX as i64 {
+    if self.nencoded_frames + self.nsef_frames >= i32::MAX as i64 {
       None?
     }
     cur_pos = self.buffer_val(
-      (self.prev_metrics.show_frame as i64) << 31
+      ((self.prev_metrics.show_frame as i64) << 31)
         | self.prev_metrics.fti as i64,
       4,
       cur_pos,

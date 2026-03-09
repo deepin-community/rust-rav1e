@@ -1,5 +1,5 @@
 // Copyright (c) 2001-2016, Alliance for Open Media. All rights reserved
-// Copyright (c) 2017-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -12,7 +12,6 @@ use std::io::Read;
 
 use crate::color::ChromaSampling::Cs400;
 use crate::decoder::{DecodeError, Decoder, FrameBuilder, VideoDetails};
-use crate::Frame;
 use rav1e::prelude::*;
 
 impl Decoder for y4m::Decoder<Box<dyn Read + Send>> {
@@ -84,7 +83,7 @@ impl From<y4m::Error> for DecodeError {
       y4m::Error::BadInput => DecodeError::BadInput,
       y4m::Error::UnknownColorspace => DecodeError::UnknownColorspace,
       y4m::Error::ParseError(_) => DecodeError::ParseError,
-      y4m::Error::IoError(e) => DecodeError::IoError(e),
+      y4m::Error::IoError(_) => DecodeError::IoError,
       // Note that this error code has nothing to do with the system running out of memory,
       // it means the y4m decoder has exceeded its memory allocation limit.
       y4m::Error::OutOfMemory => DecodeError::MemoryLimitExceeded,
