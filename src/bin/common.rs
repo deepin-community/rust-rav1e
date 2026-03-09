@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -10,17 +10,19 @@
 use crate::error::*;
 use crate::muxer::{create_muxer, Muxer};
 use crate::stats::MetricsEnabled;
-use crate::{ColorPrimaries, MatrixCoefficients, TransferCharacteristics};
+use clap::builder::styling::AnsiColor;
+use clap::builder::Styles;
 use clap::{CommandFactory, Parser as Clap, Subcommand};
 use clap_complete::{generate, Shell};
-use once_cell::sync::Lazy;
 use rav1e::prelude::*;
 use scan_fmt::scan_fmt;
 
+use rav1e::config::CpuFeatureLevel;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 pub mod built_info {
   // The file has been placed there by the build script.
@@ -30,6 +32,7 @@ pub mod built_info {
 #[derive(Clap)]
 #[clap(
   name = "rav1e",
+  styles = get_styles(),
   version = get_version(),
   long_version = get_long_version(),
   about = "AV1 video encoder",
@@ -194,6 +197,10 @@ pub struct CliOptions {
     help_heading = "ENCODE SETTINGS"
   )]
   pub film_grain_table: Option<PathBuf>,
+  /// Force the high bitdepth codepath even for 8bit content.
+  /// Mainly for debugging purposes.
+  #[clap(long, help_heading = "ENCODE SETTINGS")]
+  pub high_bitdepth: bool,
 
   /// Pixel range
   #[clap(long, value_parser, help_heading = "VIDEO METADATA")]
@@ -253,8 +260,19 @@ pub struct CliOptions {
   pub command: Option<Commands>,
 }
 
+static VERSION_STR: OnceLock<String> = OnceLock::new();
+static LONG_VERSION_STR: OnceLock<String> = OnceLock::new();
+
+fn get_styles() -> Styles {
+  Styles::styled()
+    .header(AnsiColor::Yellow.on_default())
+    .usage(AnsiColor::Green.on_default())
+    .literal(AnsiColor::Green.on_default())
+    .placeholder(AnsiColor::Green.on_default())
+}
+
 fn get_version() -> &'static str {
-  static VERSION_STR: Lazy<String> = Lazy::new(|| {
+  VERSION_STR.get_or_init(|| {
     format!(
       "{} ({})",
       rav1e::version::full(),
@@ -262,29 +280,35 @@ fn get_version() -> &'static str {
       // not if there are optimizations.
       if cfg!(debug_assertions) { "debug" } else { "release" }
     )
-  });
-  &VERSION_STR
+  })
 }
 
 fn get_long_version() -> &'static str {
-  static LONG_VERSION_STR: Lazy<String> = Lazy::new(|| {
-    let mut rustflags = env!("CARGO_ENCODED_RUSTFLAGS");
-    if rustflags.trim().is_empty() {
-      rustflags = "(None)";
-    }
+  LONG_VERSION_STR.get_or_init(|| {
+    let rustflags = env!("CARGO_ENCODED_RUSTFLAGS");
+    let rustflags = if rustflags.trim().is_empty() {
+      "(None)".to_string()
+    } else {
+      // Replace non-printable ASCII Unit Separator with whitespace
+      rustflags.replace(0x1F as char, " ")
+    };
     format!(
-      "{}\n{} {}\nCompiled CPU Features: {}\nAssembly: {}\nThreading: {}\nUnstable Features: {}\nCompiler Flags: {}",
+      "{}\n{} {}\nCompiled CPU Features: {}\nRuntime Assembly Support: {}{}\nThreading: {}\nUnstable Features: {}\nCompiler Flags: {}",
       get_version(),
       built_info::RUSTC_VERSION,
       built_info::TARGET,
       option_env!("CARGO_CFG_TARGET_FEATURE").unwrap_or("(None)"),
       if cfg!(feature = "asm") { "Enabled" } else { "Disabled" },
+      if cfg!(feature = "asm") {
+        format!("\nRuntime Assembly Level: {}", CpuFeatureLevel::default())
+      } else {
+        String::new()
+      },
       if cfg!(feature = "threading") { "Enabled" } else { "Disabled" },
       if cfg!(feature = "unstable") { "Enabled" } else { "Disabled" },
       rustflags
     )
-  });
-  &LONG_VERSION_STR
+  })
 }
 
 #[derive(Subcommand)]
@@ -329,15 +353,17 @@ pub struct ParsedCliOptions {
   pub metrics_enabled: MetricsEnabled,
   pub pass1file_name: Option<PathBuf>,
   pub pass2file_name: Option<PathBuf>,
+  #[cfg(feature = "serialize")]
   pub save_config: Option<PathBuf>,
   pub photon_noise: u8,
   #[cfg(feature = "unstable")]
+  #[allow(unused)]
   pub slots: usize,
+  pub force_highbitdepth: bool,
 }
 
 #[cfg(feature = "serialize")]
-static HELP_TEXT: once_cell::sync::OnceCell<String> =
-  once_cell::sync::OnceCell::new();
+static HELP_TEXT: OnceLock<String> = OnceLock::new();
 
 #[cfg(feature = "serialize")]
 fn build_speed_long_help() -> Option<&'static str> {
@@ -377,6 +403,7 @@ fn build_speed_long_help() -> Option<&'static str> {
 pub fn parse_cli() -> Result<ParsedCliOptions, CliError> {
   let matches = CliOptions::parse();
 
+  #[cfg(feature = "serialize")]
   let mut save_config_path = None;
   let mut enc = None;
 
@@ -476,8 +503,10 @@ pub fn parse_cli() -> Result<ParsedCliOptions, CliError> {
     threads: matches.threads,
     pass1file_name: matches.first_pass.clone(),
     pass2file_name: matches.second_pass.clone(),
+    #[cfg(feature = "serialize")]
     save_config: save_config_path,
     photon_noise: matches.photon_noise,
+    force_highbitdepth: matches.high_bitdepth,
     #[cfg(feature = "unstable")]
     slots,
   })

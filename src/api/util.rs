@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -142,7 +142,7 @@ impl fmt::Display for FrameType {
 pub struct T35 {
   /// Country code.
   pub country_code: u8,
-  /// Country code extension bytes (if country_code == 0xFF)
+  /// Country code extension bytes (if `country_code` == 0xFF)
   pub country_code_extension_byte: u8,
   /// T.35 payload.
   pub data: Box<[u8]>,

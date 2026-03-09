@@ -14,7 +14,6 @@ use crate::api::{
   EncoderConfig, EncoderStatus, FrameType, Opaque, Packet, T35,
 };
 use crate::color::ChromaSampling::Cs400;
-use crate::cpu_features::CpuFeatureLevel;
 use crate::dist::get_satd;
 use crate::encoder::*;
 use crate::frame::*;
@@ -23,12 +22,11 @@ use crate::rate::{
   RCState, FRAME_NSUBTYPES, FRAME_SUBTYPE_I, FRAME_SUBTYPE_P,
   FRAME_SUBTYPE_SEF,
 };
-use crate::scenechange::SceneChangeDetector;
 use crate::stats::EncoderStats;
 use crate::tiling::Area;
 use crate::util::Pixel;
 use arrayvec::ArrayVec;
-use rust_hawktracer::*;
+use av_scenechange::SceneChangeDetector;
 use std::cmp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -55,7 +53,7 @@ pub struct InterConfig {
   group_output_len: u64,
   /// Interval between consecutive S-frames.
   /// Keyframes reset this interval.
-  /// This MUST be a multiple of group_input_len.
+  /// This MUST be a multiple of `group_input_len`.
   pub(crate) switch_frame_interval: u64,
 }
 
@@ -230,12 +228,12 @@ pub(crate) struct ContextInner<T: Pixel> {
   pub(crate) output_frameno: u64,
   pub(super) inter_cfg: InterConfig,
   pub(super) frames_processed: u64,
-  /// Maps *input_frameno* to frames
+  /// Maps *`input_frameno`* to frames
   pub(super) frame_q: FrameQueue<T>,
-  /// Maps *output_frameno* to frame data
+  /// Maps *`output_frameno`* to frame data
   pub(super) frame_data: FrameDataQueue<T>,
-  /// A list of the input_frameno for keyframes in this encode.
-  /// Needed so that we don't need to keep all of the frame_invariants in
+  /// A list of the `input_frameno` for keyframes in this encode.
+  /// Needed so that we don't need to keep all of the `frame_invariants` in
   ///  memory for the whole life of the encode.
   // TODO: Is this needed at all?
   keyframes: BTreeSet<u64>,
@@ -275,6 +273,31 @@ impl<T: Pixel> ContextInner<T> {
     let seq = Arc::new(Sequence::new(enc));
     let inter_cfg = InterConfig::new(enc);
     let lookahead_distance = inter_cfg.keyframe_lookahead_distance() as usize;
+    let mut keyframe_detector = SceneChangeDetector::new(
+      (enc.width, enc.height),
+      enc.bit_depth,
+      av_scenechange::Rational32::new(
+        enc.time_base.den as i32,
+        enc.time_base.num as i32,
+      ),
+      enc.chroma_sampling,
+      lookahead_distance,
+      match enc.speed_settings.scene_detection_mode {
+        super::SceneDetectionSpeed::Fast => {
+          av_scenechange::SceneDetectionSpeed::Fast
+        }
+        super::SceneDetectionSpeed::Standard => {
+          av_scenechange::SceneDetectionSpeed::Standard
+        }
+        super::SceneDetectionSpeed::None => {
+          av_scenechange::SceneDetectionSpeed::None
+        }
+      },
+      enc.min_key_frame_interval as usize,
+      enc.max_key_frame_interval as usize,
+      av_scenechange::CpuFeatureLevel::default(),
+    );
+    keyframe_detector.enable_cache();
 
     ContextInner {
       frame_count: 0,
@@ -289,12 +312,7 @@ impl<T: Pixel> ContextInner<T> {
       packet_data,
       gop_output_frameno_start: BTreeMap::new(),
       gop_input_frameno_start: BTreeMap::new(),
-      keyframe_detector: SceneChangeDetector::new(
-        enc.clone(),
-        CpuFeatureLevel::default(),
-        lookahead_distance,
-        seq.clone(),
-      ),
+      keyframe_detector,
       config: Arc::new(enc.clone()),
       seq,
       rc_state: RCState::new(
@@ -316,7 +334,7 @@ impl<T: Pixel> ContextInner<T> {
     }
   }
 
-  #[hawktracer(send_frame)]
+  #[profiling::function]
   pub fn send_frame(
     &mut self, mut frame: Option<Arc<Frame<T>>>,
     params: Option<FrameParameters>,
@@ -336,8 +354,7 @@ impl<T: Pixel> ContextInner<T> {
       for (p, plane) in frame.planes[..planes].iter().enumerate() {
         assert!(
           plane.probe_padding(width, height),
-          "Plane {} was not padded before passing Frame to send_frame().",
-          p
+          "Plane {p} was not padded before passing Frame to send_frame()."
         );
       }
     }
@@ -481,9 +498,9 @@ impl<T: Pixel> ContextInner<T> {
   pub fn build_dump_properties() -> PathBuf {
     let mut data_location = PathBuf::new();
     if env::var_os("RAV1E_DATA_PATH").is_some() {
-      data_location.push(&env::var_os("RAV1E_DATA_PATH").unwrap());
+      data_location.push(env::var_os("RAV1E_DATA_PATH").unwrap());
     } else {
-      data_location.push(&env::current_dir().unwrap());
+      data_location.push(env::current_dir().unwrap());
       data_location.push(".lookahead_data");
     }
     fs::create_dir_all(&data_location).unwrap();
@@ -649,7 +666,7 @@ impl<T: Pixel> ContextInner<T> {
   /// `rec_buffer` and `lookahead_rec_buffer` on the `FrameInvariants`. This
   /// function must be called after every new `FrameInvariants` is initially
   /// computed.
-  #[hawktracer(compute_lookahead_motion_vectors)]
+  #[profiling::function]
   fn compute_lookahead_motion_vectors(&mut self, output_frameno: u64) {
     let frame_data = self.frame_data.get(&output_frameno).unwrap();
 
@@ -842,19 +859,16 @@ impl<T: Pixel> ContextInner<T> {
       .lookahead_intra_costs = self
       .keyframe_detector
       .intra_costs
-      .remove(&fi.input_frameno)
+      .as_mut()
+      .and_then(|intra_costs| intra_costs.remove(&(fi.input_frameno as usize)))
       .unwrap_or_else(|| {
-        let frame = self.frame_q[&fi.input_frameno].as_ref().unwrap();
-
-        let temp_plane = self
-          .keyframe_detector
-          .temp_plane
-          .get_or_insert_with(|| frame.planes[0].clone());
-
-        // We use the cached values from scenechange if available,
+        // We use the cached values from scenechange above if available,
         // otherwise we need to calculate them here.
+        let frame = self.frame_q[&fi.input_frameno].as_ref().unwrap();
+        let mut temp_plane = frame.planes[0].clone();
+
         estimate_intra_costs(
-          temp_plane,
+          &mut temp_plane,
           &**frame,
           fi.sequence.bit_depth,
           fi.cpu_feature_level,
@@ -862,7 +876,7 @@ impl<T: Pixel> ContextInner<T> {
       });
   }
 
-  #[hawktracer(compute_keyframe_placement)]
+  #[profiling::function]
   pub fn compute_keyframe_placement(
     lookahead_frames: &[&Arc<Frame<T>>], keyframes_forced: &BTreeSet<u64>,
     keyframe_detector: &mut SceneChangeDetector<T>,
@@ -871,8 +885,8 @@ impl<T: Pixel> ContextInner<T> {
     if keyframes_forced.contains(next_lookahead_frame)
       || keyframe_detector.analyze_next_frame(
         lookahead_frames,
-        *next_lookahead_frame,
-        *keyframes.iter().last().unwrap(),
+        *next_lookahead_frame as usize,
+        *keyframes.iter().last().unwrap() as usize,
       )
     {
       keyframes.insert(*next_lookahead_frame);
@@ -881,7 +895,7 @@ impl<T: Pixel> ContextInner<T> {
     *next_lookahead_frame += 1;
   }
 
-  #[hawktracer(compute_frame_invariants)]
+  #[profiling::function]
   pub fn compute_frame_invariants(&mut self) {
     while self.set_frame_properties(self.next_lookahead_output_frameno).is_ok()
     {
@@ -894,7 +908,7 @@ impl<T: Pixel> ContextInner<T> {
     }
   }
 
-  #[hawktracer(update_block_importances)]
+  #[profiling::function]
   fn update_block_importances(
     fi: &FrameInvariants<T>, me_stats: &crate::me::FrameMEStats,
     frame: &Frame<T>, reference_frame: &Frame<T>, bit_depth: usize,
@@ -1057,7 +1071,7 @@ impl<T: Pixel> ContextInner<T> {
   }
 
   /// Computes the block importances for the current output frame.
-  #[hawktracer(compute_block_importances)]
+  #[profiling::function]
   fn compute_block_importances(&mut self) {
     // SEF don't need block importances.
     if self.frame_data[&self.output_frameno]
@@ -1281,7 +1295,7 @@ impl<T: Pixel> ContextInner<T> {
     }
   }
 
-  #[hawktracer(encode_show_existing_packet)]
+  #[profiling::function]
   pub fn encode_show_existing_packet(
     &mut self, cur_output_frameno: u64,
   ) -> Result<Packet<T>, EncoderStatus> {
@@ -1317,7 +1331,7 @@ impl<T: Pixel> ContextInner<T> {
     self.finalize_packet(rec, source, input_frameno, frame_type, qp, enc_stats)
   }
 
-  #[hawktracer(encode_normal_packet)]
+  #[profiling::function]
   pub fn encode_normal_packet(
     &mut self, cur_output_frameno: u64,
   ) -> Result<Packet<T>, EncoderStatus> {
@@ -1480,7 +1494,7 @@ impl<T: Pixel> ContextInner<T> {
     }
   }
 
-  #[hawktracer(receive_packet)]
+  #[profiling::function]
   pub fn receive_packet(&mut self) -> Result<Packet<T>, EncoderStatus> {
     if self.done_processing() {
       return Err(EncoderStatus::LimitReached);
@@ -1546,7 +1560,7 @@ impl<T: Pixel> ContextInner<T> {
     })
   }
 
-  #[hawktracer(garbage_collect)]
+  #[profiling::function]
   fn garbage_collect(&mut self, cur_input_frameno: u64) {
     if cur_input_frameno == 0 {
       return;

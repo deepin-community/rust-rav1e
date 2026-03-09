@@ -1,4 +1,4 @@
-// Copyright (c) 2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2020-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -11,11 +11,12 @@
 mod test {
   use interpolate_name::interpolate_test;
   use rand::random;
+  use std::mem::MaybeUninit;
 
   use crate::context::MAX_TX_SIZE;
   use crate::cpu_features::CpuFeatureLevel;
   use crate::frame::{AsRegion, Plane};
-  use crate::partition::BlockSize;
+  use crate::partition::{BlockSize, IntraEdge};
   use crate::predict::dispatch_predict_intra;
   use crate::predict::pred_cfl_ac;
   use crate::predict::rust;
@@ -23,7 +24,7 @@ mod test {
     IntraEdgeFilterParameters, PredictionMode, PredictionVariant,
   };
   use crate::transform::TxSize;
-  use crate::util::Aligned;
+  use crate::util::{slice_assume_init_mut, Aligned};
   use crate::Pixel;
 
   #[test]
@@ -39,18 +40,11 @@ mod test {
 
   fn pred_matches_inner<T: Pixel>(cpu: CpuFeatureLevel, bit_depth: usize) {
     let tx_size = TxSize::TX_4X4;
-    // SAFETY: We write to the array below before reading from it.
-    let mut ac: Aligned<[i16; 32 * 32]> = unsafe { Aligned::uninitialized() };
-    for i in 0..ac.data.len() {
-      ac.data[i] = i as i16 - 16 * 32;
-    }
-    // SAFETY: We write to the array below before reading from it.
-    let mut edge_buf: Aligned<[T; 4 * MAX_TX_SIZE + 1]> =
-      unsafe { Aligned::uninitialized() };
-    for i in 0..edge_buf.data.len() {
-      edge_buf.data[i] =
-        T::cast_from(((i ^ 1) + 32).saturating_sub(2 * MAX_TX_SIZE));
-    }
+    let ac: Aligned<[i16; 32 * 32]> = Aligned::from_fn(|i| i as i16 - 16 * 32);
+    let edge_buf = Aligned::from_fn(|i| {
+      T::cast_from(((i ^ 1) + 32).saturating_sub(2 * MAX_TX_SIZE))
+    });
+    let edge_buf = IntraEdge::mock(&edge_buf);
 
     let ief_params_all = [
       None,
@@ -196,27 +190,34 @@ mod test {
     }
     let luma = &plane.as_region();
 
-    let mut ac_ref = Aligned::new([0i16; 32 * 32]);
+    let mut ac_ref = Aligned::new([MaybeUninit::new(0x3333i16); 32 * 32]);
+    let ac_ref = &mut ac_ref.data[..plane_bsize.area()];
 
     let cpu = CpuFeatureLevel::RUST;
     (match (xdec, ydec) {
       (0, 0) => rust::pred_cfl_ac::<T, 0, 0>,
       (1, 0) => rust::pred_cfl_ac::<T, 1, 0>,
       (_, _) => rust::pred_cfl_ac::<T, 1, 1>,
-    })(&mut ac_ref.data, luma, plane_bsize, w_pad, h_pad, cpu);
+    })(ac_ref, luma, plane_bsize, w_pad, h_pad, cpu);
 
     for &cpu in
       &CpuFeatureLevel::all()[..=CpuFeatureLevel::default().as_index()]
     {
-      let mut ac = Aligned::new([0i16; 32 * 32]);
+      let mut ac = Aligned::new([MaybeUninit::new(0x7FFFi16); 32 * 32]);
+      let ac = &mut ac.data[..plane_bsize.area()];
 
       (match (xdec, ydec) {
         (0, 0) => pred_cfl_ac::<T, 0, 0>,
         (1, 0) => pred_cfl_ac::<T, 1, 0>,
         (_, _) => pred_cfl_ac::<T, 1, 1>,
-      })(&mut ac.data, luma, plane_bsize, w_pad, h_pad, cpu);
+      })(ac, luma, plane_bsize, w_pad, h_pad, cpu);
 
-      assert_eq!(&ac_ref.data[..], &ac.data[..])
+      unsafe {
+        let ac_ref = slice_assume_init_mut(ac_ref);
+        let ac = slice_assume_init_mut(ac);
+
+        assert_eq!(&ac_ref, &ac);
+      }
     }
   }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -24,7 +24,6 @@ use crate::util::{clamp, Pixel};
 use crate::FrameInvariants;
 
 use arrayvec::*;
-use rust_hawktracer::*;
 use std::ops::{Index, IndexMut};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -383,7 +382,7 @@ impl MotionEstimationSubsets {
   }
 }
 
-#[hawktracer(get_subset_predictors)]
+#[profiling::function]
 fn get_subset_predictors(
   tile_bo: TileBlockOffset, tile_me_stats: &TileMEStats<'_>,
   frame_ref_opt: Option<ReadGuardMEStats<'_>>, ref_frame_id: usize,
@@ -690,7 +689,7 @@ fn refine_subsampled_motion_estimate<T: Pixel>(
   }
 }
 
-#[hawktracer(full_pixel_me)]
+#[profiling::function]
 fn full_pixel_me<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &TileStateMut<'_, T>,
   org_region: &PlaneRegion<T>, p_ref: &Plane<T>, tile_bo: TileBlockOffset,
@@ -820,7 +819,6 @@ fn full_pixel_me<T: Pixel>(
     }
 
     {
-      let ssdec = ssdec;
       let range_x = (192 * fi.me_range_scale as isize) >> ssdec;
       let range_y = (64 * fi.me_range_scale as isize) >> ssdec;
       let x_lo = po.x + (-range_x).max(mvx_min / 8);
@@ -882,7 +880,7 @@ fn sub_pixel_me<T: Pixel>(
   );
 }
 
-#[hawktracer(get_best_predictor)]
+#[profiling::function]
 fn get_best_predictor<T: Pixel>(
   fi: &FrameInvariants<T>, po: PlaneOffset, org_region: &PlaneRegion<T>,
   p_ref: &Plane<T>, predictors: &[MotionVector], bit_depth: usize,
@@ -953,7 +951,7 @@ const DIAMOND_R1_PATTERN: [MotionVector; 4] = search_pattern!(
 /// For each step size, candidate motion vectors are examined for improvement
 /// to the current search location. The search location is moved to the best
 /// candidate (if any). This is repeated until the search location stops moving.
-#[hawktracer(fullpel_diamond_search)]
+#[profiling::function]
 fn fullpel_diamond_search<T: Pixel>(
   fi: &FrameInvariants<T>, po: PlaneOffset, org_region: &PlaneRegion<T>,
   p_ref: &Plane<T>, current: &mut MotionSearchResult, bit_depth: usize,
@@ -1020,7 +1018,7 @@ fn fullpel_diamond_search<T: Pixel>(
 /// The search above has gone through the following steps.
 /// 1. Search '1' elements for better candidates than the center '0'.
 /// 2. Recenter around the best candidate ('(1)') and hexagon candidates that
-/// don't overlap with the previous search step (labeled '2').
+///    don't overlap with the previous search step (labeled '2').
 const HEXAGON_PATTERN: [MotionVector; 6] = search_pattern!(
   col: [  0,  2,  2,  0, -2, -2],
   row: [ -2, -1,  1,  2,  1, -1]
@@ -1053,7 +1051,7 @@ const SQUARE_REFINE_PATTERN: [MotionVector; 8] = search_pattern!(
 ///
 /// `current` provides the initial search location and serves as
 /// the output for the final search results.
-#[hawktracer(hexagon_search)]
+#[profiling::function]
 fn hexagon_search<T: Pixel>(
   fi: &FrameInvariants<T>, po: PlaneOffset, org_region: &PlaneRegion<T>,
   p_ref: &Plane<T>, current: &mut MotionSearchResult, bit_depth: usize,
@@ -1168,7 +1166,7 @@ const UMH_PATTERN: [MotionVector; 16] = search_pattern!(
 /// the output for the final search results.
 ///
 /// `me_range` parameter determines how far these stages can search.
-#[hawktracer(uneven_multi_hex_search)]
+#[profiling::function]
 fn uneven_multi_hex_search<T: Pixel>(
   fi: &FrameInvariants<T>, po: PlaneOffset, org_region: &PlaneRegion<T>,
   p_ref: &Plane<T>, current: &mut MotionSearchResult, bit_depth: usize,
@@ -1309,7 +1307,7 @@ fn uneven_multi_hex_search<T: Pixel>(
 /// For each step size, candidate motion vectors are examined for improvement
 /// to the current search location. The search location is moved to the best
 /// candidate (if any). This is repeated until the search location stops moving.
-#[hawktracer(subpel_diamond_search)]
+#[profiling::function]
 fn subpel_diamond_search<T: Pixel>(
   fi: &FrameInvariants<T>, po: PlaneOffset, org_region: &PlaneRegion<T>,
   _p_ref: &Plane<T>, bit_depth: usize, pmv: [MotionVector; 2], lambda: u32,
@@ -1462,7 +1460,7 @@ fn compute_mv_rd<T: Pixel>(
   MVCandidateRD { cost: 256 * sad as u64 + rate as u64 * lambda as u64, sad }
 }
 
-#[hawktracer(full_search)]
+#[profiling::function]
 fn full_search<T: Pixel>(
   fi: &FrameInvariants<T>, x_lo: isize, x_hi: isize, y_lo: isize, y_hi: isize,
   w: usize, h: usize, org_region: &PlaneRegion<T>, p_ref: &Plane<T>,

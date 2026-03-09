@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -14,11 +14,10 @@ use crate::encoder::FrameInvariants;
 use crate::partition::RefType::*;
 use crate::predict::PredictionMode::*;
 use crate::quantize::*;
-use crate::rayon::iter::*;
 use crate::tiling::*;
 use crate::util::{clamp, ILog, Pixel};
 use crate::DeblockState;
-use rust_hawktracer::*;
+use rayon::iter::*;
 use std::cmp;
 
 fn deblock_adjusted_level(
@@ -1107,7 +1106,7 @@ fn filter_v_edge<T: Pixel>(
   } else {
     block.bsize.largest_chroma_tx_size(xdec, ydec)
   };
-  let tx_edge = bo.0.x >> xdec & (txsize.width_mi() - 1) == 0;
+  let tx_edge = (bo.0.x >> xdec) & (txsize.width_mi() - 1) == 0;
   if tx_edge {
     let prev_block = deblock_left(blocks, bo, &p.as_const());
     let block_edge = bo.0.x & (block.n4_w as usize - 1) == 0;
@@ -1154,7 +1153,7 @@ fn sse_v_edge<T: Pixel>(
   } else {
     block.bsize.largest_chroma_tx_size(xdec, ydec)
   };
-  let tx_edge = bo.0.x >> xdec & (txsize.width_mi() - 1) == 0;
+  let tx_edge = (bo.0.x >> xdec) & (txsize.width_mi() - 1) == 0;
   if tx_edge {
     let prev_block = deblock_left(blocks, bo, rec_plane);
     let block_edge = bo.0.x & (block.n4_w as usize - 1) == 0;
@@ -1203,7 +1202,7 @@ fn filter_h_edge<T: Pixel>(
   } else {
     block.bsize.largest_chroma_tx_size(xdec, ydec)
   };
-  let tx_edge = bo.0.y >> ydec & (txsize.height_mi() - 1) == 0;
+  let tx_edge = (bo.0.y >> ydec) & (txsize.height_mi() - 1) == 0;
   if tx_edge {
     let prev_block = deblock_up(blocks, bo, &p.as_const());
     let block_edge = bo.0.y & (block.n4_h as usize - 1) == 0;
@@ -1250,7 +1249,7 @@ fn sse_h_edge<T: Pixel>(
   } else {
     block.bsize.largest_chroma_tx_size(xdec, ydec)
   };
-  let tx_edge = bo.0.y >> ydec & (txsize.height_mi() - 1) == 0;
+  let tx_edge = (bo.0.y >> ydec) & (txsize.height_mi() - 1) == 0;
   if tx_edge {
     let prev_block = deblock_up(blocks, bo, rec_plane);
     let block_edge = bo.0.y & (block.n4_h as usize - 1) == 0;
@@ -1291,7 +1290,7 @@ fn sse_h_edge<T: Pixel>(
 }
 
 // Deblocks all edges, vertical and horizontal, in a single plane
-#[hawktracer(deblock_plane)]
+#[profiling::function]
 pub fn deblock_plane<T: Pixel>(
   deblock: &DeblockState, p: &mut PlaneRegionMut<T>, pli: usize,
   blocks: &TileBlocks, crop_w: usize, crop_h: usize, bd: usize,
@@ -1541,7 +1540,7 @@ fn sse_plane<T: Pixel>(
 }
 
 // Deblocks all edges in all planes of a frame
-#[hawktracer(deblock_filter_frame)]
+#[profiling::function]
 pub fn deblock_filter_frame<T: Pixel>(
   deblock: &DeblockState, tile: &mut TileMut<T>, blocks: &TileBlocks,
   crop_w: usize, crop_h: usize, bd: usize, planes: usize,
@@ -1617,7 +1616,7 @@ fn sse_optimize<T: Pixel>(
   level
 }
 
-#[hawktracer(deblock_filter_optimize)]
+#[profiling::function]
 pub fn deblock_filter_optimize<T: Pixel, U: Pixel>(
   fi: &FrameInvariants<T>, rec: &Tile<U>, input: &Tile<U>,
   blocks: &TileBlocks, crop_w: usize, crop_h: usize,

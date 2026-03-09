@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -16,11 +16,10 @@ use crate::tiling::TileStateMut;
 use crate::util::Pixel;
 use crate::FrameInvariants;
 use crate::FrameState;
-use rust_hawktracer::*;
 
 pub const MAX_SEGMENTS: usize = 8;
 
-#[hawktracer(segmentation_optimize)]
+#[profiling::function]
 pub fn segmentation_optimize<T: Pixel>(
   fi: &FrameInvariants<T>, fs: &mut FrameState<T>,
 ) {
@@ -160,7 +159,7 @@ fn segmentation_optimize_inner<T: Pixel>(
   fs.segmentation.update_threshold(fi.base_q_idx, fi.config.bit_depth);
 }
 
-#[hawktracer(select_segment)]
+#[profiling::function]
 pub fn select_segment<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &TileStateMut<'_, T>, tile_bo: TileBlockOffset,
   bsize: BlockSize, skip: bool,
@@ -182,6 +181,10 @@ pub fn select_segment<T: Pixel>(
 
   // Avoid going into lossless mode by never bringing qidx below 1.
   let sidx = sidx.max(ts.segmentation.min_segment);
+
+  if fi.config.speed_settings.segmentation == SegmentationLevel::Complex {
+    return sidx..=ts.segmentation.max_segment.min(sidx.saturating_add(1));
+  }
 
   sidx..=sidx
 }

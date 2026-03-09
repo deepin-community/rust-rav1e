@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -6,37 +6,6 @@
 // obtain it at www.aomedia.org/license/software. If the Alliance for Open
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
-
-#![deny(bare_trait_objects)]
-#![allow(clippy::cast_lossless)]
-#![allow(clippy::cast_ptr_alignment)]
-#![allow(clippy::cognitive_complexity)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::verbose_bit_mask)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::many_single_char_names)]
-// Performance lints
-#![warn(clippy::linkedlist)]
-#![warn(clippy::missing_const_for_fn)]
-#![warn(clippy::mutex_integer)]
-#![warn(clippy::suboptimal_flops)]
-// Correctness lints
-#![warn(clippy::expl_impl_clone_on_copy)]
-#![warn(clippy::mem_forget)]
-#![warn(clippy::path_buf_push_overwrite)]
-// Clarity/formatting lints
-#![warn(clippy::map_flatten)]
-#![warn(clippy::mut_mut)]
-#![warn(clippy::needless_borrow)]
-#![warn(clippy::needless_continue)]
-#![warn(clippy::range_plus_one)]
-// Documentation lints
-#![warn(clippy::doc_markdown)]
-#![warn(clippy::missing_errors_doc)]
-#![warn(clippy::missing_panics_doc)]
-// FIXME: Temporarily disabled due to https://github.com/rust-lang/rust-clippy/issues/9142
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 #[macro_use]
 extern crate log;
@@ -54,7 +23,6 @@ use crate::error::*;
 use crate::stats::*;
 use rav1e::config::CpuFeatureLevel;
 use rav1e::prelude::*;
-use rust_hawktracer::*;
 
 use crate::decoder::{Decoder, FrameBuilder, VideoDetails};
 use crate::muxer::*;
@@ -105,7 +73,7 @@ impl<D: Decoder> Source<D> {
     }
   }
 
-  #[hawktracer(Source_read_frame)]
+  #[profiling::function]
   fn read_frame<T: Pixel>(
     &mut self, ctx: &mut Context<T>, video_info: VideoDetails,
   ) -> Result<(), CliError> {
@@ -141,7 +109,7 @@ impl<D: Decoder> Source<D> {
 
 // Encode and write a frame.
 // Returns frame information in a `Result`.
-#[hawktracer(process_frame)]
+#[profiling::function]
 fn process_frame<T: Pixel, D: Decoder>(
   ctx: &mut Context<T>, output_file: &mut dyn Muxer, source: &mut Source<D>,
   pass1file: Option<&mut File>, pass2file: Option<&mut File>,
@@ -227,7 +195,7 @@ fn process_frame<T: Pixel, D: Decoder>(
         Some(RcData::Summary(outbuf)) => {
           // The last packet of rate control data we get is the summary data.
           // Let's put it at the start of the file.
-          passfile.seek(std::io::SeekFrom::Start(0)).map_err(|e| {
+          passfile.rewind().map_err(|e| {
             e.context("Unable to seek in the two-pass data file.")
           })?;
           let len = outbuf.len() as u64;
@@ -288,7 +256,7 @@ fn do_encode<T: Pixel, D: Decoder>(
           info!("{} - {}", frame, progress);
         } else {
           // Print a one-line progress indicator that overrides itself with every update
-          eprint!("\r{}                    ", progress);
+          eprint!("\r{progress}                    ");
         };
       }
 
@@ -306,16 +274,20 @@ fn do_encode<T: Pixel, D: Decoder>(
 }
 
 fn main() {
-  #[cfg(feature = "tracing")]
   init_logger();
 
   #[cfg(feature = "tracing")]
-  let instance = HawktracerInstance::new();
+  let (chrome_layer, _guard) =
+    tracing_chrome::ChromeLayerBuilder::new().build();
+
   #[cfg(feature = "tracing")]
-  let _listener = instance.create_listener(HawktracerListenerType::ToFile {
-    file_path: "trace.bin".into(),
-    buffer_size: 4096,
-  });
+  {
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing::subscriber::set_global_default(
+      tracing_subscriber::registry().with(chrome_layer),
+    )
+    .unwrap();
+  }
 
   run().unwrap_or_else(|e| {
     error::print_error(&e);
@@ -323,7 +295,6 @@ fn main() {
   });
 }
 
-#[cfg(feature = "tracing")]
 fn init_logger() {
   use std::str::FromStr;
   fn level_colored(l: log::Level) -> console::StyledObject<&'static str> {
@@ -368,7 +339,7 @@ fn init_logger() {
 cfg_if::cfg_if! {
   if #[cfg(any(target_os = "windows", target_arch = "wasm32"))] {
     fn print_rusage() {
-      eprintln!("Windows benchmarking is not supported currently.");
+      eprintln!("Resource usage reporting is not currently supported on this platform");
     }
   } else {
     fn print_rusage() {
@@ -386,7 +357,7 @@ cfg_if::cfg_if! {
         "system time: {} s",
         stime.tv_sec as f64 + stime.tv_usec as f64 / 1_000_000f64
       );
-      eprintln!("maximum rss: {} KB", maxrss);
+      eprintln!("maximum rss: {maxrss} KB");
     }
   }
 }
@@ -580,7 +551,7 @@ fn run() -> Result<(), error::CliError> {
 
   let source = Source::new(cli.limit, y4m_dec);
 
-  if video_info.bit_depth == 8 {
+  if video_info.bit_depth == 8 && !cli.force_highbitdepth {
     do_encode::<u8, y4m::Decoder<Box<dyn Read + Send>>>(
       cfg,
       cli.verbose,

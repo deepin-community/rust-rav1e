@@ -12,8 +12,6 @@ cfg_if::cfg_if! {
     pub use crate::asm::x86::dist::*;
   } else if #[cfg(asm_neon)] {
     pub use crate::asm::aarch64::dist::*;
-    pub use self::rust::get_weighted_sse;
-    pub use self::rust::cdef_dist_kernel;
   } else {
     pub use self::rust::*;
   }
@@ -397,9 +395,7 @@ pub mod test {
     {
       for (j, pixel) in row.iter_mut().enumerate() {
         let val = ((j + i) as i32 - xpad_off) & 255i32;
-        assert!(
-          val >= u8::min_value().into() && val <= u8::max_value().into()
-        );
+        assert!(val >= u8::MIN.into() && val <= u8::MAX.into());
         *pixel = T::cast_from(val);
       }
     }
@@ -408,9 +404,7 @@ pub mod test {
     {
       for (j, pixel) in row.iter_mut().enumerate() {
         let val = (j as i32 - i as i32 - xpad_off) & 255i32;
-        assert!(
-          val >= u8::min_value().into() && val <= u8::max_value().into()
-        );
+        assert!(val >= u8::MIN.into() && val <= u8::MAX.into());
         *pixel = T::cast_from(val);
       }
     }

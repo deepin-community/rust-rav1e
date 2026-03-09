@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -7,17 +7,35 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+pub mod forward;
 pub mod inverse;
 
 use crate::transform::*;
+use std::ops::Index;
 
-#[inline]
-pub const fn get_tx_size_idx(tx_size: TxSize) -> usize {
-  (tx_size as usize) & 31
+impl<T> Index<TxSize> for [T; TxSize::TX_SIZES_ALL] {
+  type Output = T;
+  #[inline]
+  fn index(&self, tx_size: TxSize) -> &Self::Output {
+    // SAFETY: values of TxSize are < TX_SIZES_ALL
+    unsafe { self.get_unchecked(tx_size as usize) }
+  }
 }
 
-#[inline]
-pub const fn get_tx_type_idx(tx_type: TxType) -> usize {
-  // TX_TYPES is 2^4 or 16
-  (tx_type as usize) & (TX_TYPES - 1)
+impl<T> Index<TxType> for [T; TX_TYPES] {
+  type Output = T;
+  #[inline]
+  fn index(&self, tx_type: TxType) -> &Self::Output {
+    // SAFETY: Wraps WHT_WHT to DCT_DCT
+    unsafe { self.get_unchecked((tx_type as usize) & 15) }
+  }
+}
+
+impl<T> Index<TxType> for [T; TX_TYPES_PLUS_LL] {
+  type Output = T;
+  #[inline]
+  fn index(&self, tx_type: TxType) -> &Self::Output {
+    // SAFETY: values of TxType are < TX_TYPES_PLUS_LL
+    unsafe { self.get_unchecked(tx_type as usize) }
+  }
 }

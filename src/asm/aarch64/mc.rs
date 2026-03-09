@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2019-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -105,7 +105,7 @@ pub fn put_8tap<T: Pixel>(
     // SAFETY: The assembly only supports even heights and valid uncropped
     //         widths
     assert_eq!(height & 1, 0);
-    assert!(width.is_power_of_two() && 2 <= width && width <= 128);
+    assert!(width.is_power_of_two() && (2..=128).contains(&width));
 
     // SAFETY: Check bounds of dst
     assert!(dst.rect().width >= width && dst.rect().height >= height);
@@ -188,7 +188,7 @@ pub fn prep_8tap<T: Pixel>(
     // SAFETY: The assembly only supports even heights and valid uncropped
     //         widths
     assert_eq!(height & 1, 0);
-    assert!(width.is_power_of_two() && 2 <= width && width <= 128);
+    assert!(width.is_power_of_two() && (2..=128).contains(&width));
 
     // SAFETY: Check length of tmp
     assert!(tmp.len() >= width * height);
@@ -256,7 +256,7 @@ pub fn mc_avg<T: Pixel>(
     // SAFETY: The assembly only supports even heights and valid uncropped
     //         widths
     assert_eq!(height & 1, 0);
-    assert!(width.is_power_of_two() && 2 <= width && width <= 128);
+    assert!(width.is_power_of_two() && (2..=128).contains(&width));
 
     // SAFETY: Check bounds of dst
     assert!(dst.rect().width >= width && dst.rect().height >= height);

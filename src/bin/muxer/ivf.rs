@@ -1,5 +1,5 @@
 // Copyright (c) 2001-2016, Alliance for Open Media. All rights reserved
-// Copyright (c) 2017-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -12,7 +12,6 @@ use super::Muxer;
 use crate::error::*;
 use ivf::*;
 use rav1e::prelude::*;
-use rust_hawktracer::*;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -37,7 +36,7 @@ impl Muxer for IvfMuxer {
     );
   }
 
-  #[hawktracer(write_frame)]
+  #[profiling::function]
   fn write_frame(&mut self, pts: u64, data: &[u8], _frame_type: FrameType) {
     write_ivf_frame(&mut self.output, pts, data);
   }

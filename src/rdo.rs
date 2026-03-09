@@ -10,6 +10,12 @@
 
 #![allow(non_camel_case_types)]
 
+use std::fmt;
+use std::mem::MaybeUninit;
+
+use arrayvec::*;
+use itertools::izip;
+
 use crate::api::*;
 use crate::cdef::*;
 use crate::context::*;
@@ -19,7 +25,6 @@ use crate::dist::*;
 use crate::ec::{Writer, WriterCounter, OD_BITRES};
 use crate::encode_block_with_modes;
 use crate::encoder::{FrameInvariants, IMPORTANCE_BLOCK_SIZE};
-use crate::frame::Frame;
 use crate::frame::*;
 use crate::header::ReferenceMode;
 use crate::lrf::*;
@@ -43,12 +48,6 @@ use crate::write_tx_blocks;
 use crate::write_tx_tree;
 use crate::Tune;
 use crate::{encode_block_post_cdef, encode_block_pre_cdef};
-
-use arrayvec::*;
-use itertools::izip;
-use rust_hawktracer::*;
-use std::fmt;
-use std::mem::MaybeUninit;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum RDOType {
@@ -107,7 +106,7 @@ pub struct PartitionParameters {
 impl Default for PartitionParameters {
   fn default() -> Self {
     PartitionParameters {
-      rd_cost: std::f64::MAX,
+      rd_cost: f64::MAX,
       bo: TileBlockOffset::default(),
       bsize: BlockSize::BLOCK_32X32,
       pred_mode_luma: PredictionMode::default(),
@@ -190,8 +189,8 @@ pub fn sse_wxh<T: Pixel, F: Fn(Area, BlockSize) -> DistortionScale>(
 
   let imp_bsize = BlockSize::from_width_and_height(imp_block_w, imp_block_h);
 
-  let n_imp_blocks_w = (w + CHUNK_SIZE - 1) / CHUNK_SIZE;
-  let n_imp_blocks_h = (h + CHUNK_SIZE - 1) / CHUNK_SIZE;
+  let n_imp_blocks_w = w.div_ceil(CHUNK_SIZE);
+  let n_imp_blocks_h = h.div_ceil(CHUNK_SIZE);
 
   // TODO: Copying biases into a buffer is slow. It would be best if biases were
   // passed directly. To do this, we would need different versions of the
@@ -224,6 +223,8 @@ pub fn sse_wxh<T: Pixel, F: Fn(Area, BlockSize) -> DistortionScale>(
   ))
 }
 
+// TODO consider saturating_sub later
+#[allow(clippy::implicit_saturating_sub)]
 pub const fn clip_visible_bsize(
   frame_w: usize, frame_h: usize, bsize: BlockSize, x: usize, y: usize,
 ) -> (usize, usize) {
@@ -736,7 +737,7 @@ pub fn rdo_tx_size_type<T: Pixel>(
 
   let mut best_tx_type = TxType::DCT_DCT;
   let mut best_tx_size = tx_size;
-  let mut best_rd = std::f64::MAX;
+  let mut best_rd = f64::MAX;
 
   let do_rdo_tx_size = fi.tx_mode_select
     && fi.config.speed_settings.transform.rdo_tx_decision
@@ -811,7 +812,7 @@ const fn dmv_in_range(mv: MotionVector, ref_mv: MotionVector) -> bool {
 }
 
 #[inline]
-#[hawktracer(luma_chroma_mode_rdo)]
+#[profiling::function]
 fn luma_chroma_mode_rdo<T: Pixel>(
   luma_mode: PredictionMode, fi: &FrameInvariants<T>, bsize: BlockSize,
   tile_bo: TileBlockOffset, ts: &mut TileStateMut<'_, T>,
@@ -958,7 +959,7 @@ fn luma_chroma_mode_rdo<T: Pixel>(
 ///
 /// - If the best RD found is negative.
 ///   This should never happen and indicates a development error.
-#[hawktracer(rdo_mode_decision)]
+#[profiling::function]
 pub fn rdo_mode_decision<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, bsize: BlockSize, tile_bo: TileBlockOffset,
@@ -1116,7 +1117,7 @@ pub fn rdo_mode_decision<T: Pixel>(
   }
 }
 
-#[hawktracer(inter_frame_rdo_mode_decision)]
+#[profiling::function]
 fn inter_frame_rdo_mode_decision<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, bsize: BlockSize, tile_bo: TileBlockOffset,
@@ -1389,7 +1390,7 @@ fn inter_frame_rdo_mode_decision<T: Pixel>(
   best
 }
 
-#[hawktracer(intra_frame_rdo_mode_decision)]
+#[profiling::function]
 fn intra_frame_rdo_mode_decision<T: Pixel>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, bsize: BlockSize, tile_bo: TileBlockOffset,
@@ -1433,11 +1434,13 @@ fn intra_frame_rdo_mode_decision<T: Pixel>(
     let satds = {
       // FIXME: If tx partition is used, this whole sads block should be fixed
       let tx_size = bsize.tx_size();
+      let mut edge_buf = Aligned::uninit_array();
       let edge_buf = {
         let rec = &ts.rec.planes[0].as_const();
         let po = tile_bo.plane_offset(rec.plane_cfg);
         // FIXME: If tx partition is used, get_intra_edges() should be called for each tx block
         get_intra_edges(
+          &mut edge_buf,
           rec,
           tile_bo,
           0,
@@ -1586,7 +1589,7 @@ fn intra_frame_rdo_mode_decision<T: Pixel>(
 /// # Panics
 ///
 /// - If the block size is invalid for subsampling.
-#[hawktracer(rdo_cfl_alpha)]
+#[profiling::function]
 pub fn rdo_cfl_alpha<T: Pixel>(
   ts: &mut TileStateMut<'_, T>, tile_bo: TileBlockOffset, bsize: BlockSize,
   luma_tx_size: TxSize, fi: &FrameInvariants<T>,
@@ -1609,9 +1612,8 @@ pub fn rdo_cfl_alpha<T: Pixel>(
   if visible_tx_w == 0 || visible_tx_h == 0 {
     return None;
   };
-  // SAFETY: We write to the array below before reading from it.
-  let mut ac: Aligned<[i16; 32 * 32]> = unsafe { Aligned::uninitialized() };
-  luma_ac(&mut ac.data, ts, tile_bo, bsize, luma_tx_size, fi);
+  let mut ac = Aligned::<[MaybeUninit<i16>; 32 * 32]>::uninit_array();
+  let ac = luma_ac(&mut ac.data, ts, tile_bo, bsize, luma_tx_size, fi);
   let best_alpha: ArrayVec<i16, 2> = (1..3)
     .map(|p| {
       let &PlaneConfig { xdec, ydec, .. } = ts.rec.planes[p].plane_cfg;
@@ -1619,7 +1621,9 @@ pub fn rdo_cfl_alpha<T: Pixel>(
       let rec = &mut ts.rec.planes[p];
       let input = &ts.input_tile.planes[p];
       let po = tile_bo.plane_offset(rec.plane_cfg);
+      let mut edge_buf = Aligned::uninit_array();
       let edge_buf = get_intra_edges(
+        &mut edge_buf,
         &rec.as_const(),
         tile_bo,
         0,
@@ -1640,7 +1644,7 @@ pub fn rdo_cfl_alpha<T: Pixel>(
           &mut rec_region,
           uv_tx_size,
           fi.sequence.bit_depth,
-          &ac.data,
+          ac,
           IntraParam::Alpha(alpha),
           None,
           &edge_buf,
@@ -1702,7 +1706,7 @@ pub fn rdo_tx_type_decision<T: Pixel>(
   tx_types: &[TxType], cur_best_rd: f64,
 ) -> (TxType, f64) {
   let mut best_type = TxType::DCT_DCT;
-  let mut best_rd = std::f64::MAX;
+  let mut best_rd = f64::MAX;
 
   let PlaneConfig { xdec, ydec, .. } = ts.input.planes[1].cfg;
   let is_chroma_block =
@@ -1927,7 +1931,7 @@ fn rdo_partition_simple<T: Pixel, W: Writer>(
       );
       child_modes.push(mode_decision);
     } else {
-      //rd_cost_sum += std::f64::MAX;
+      //rd_cost_sum += f64::MAX;
       return None;
     }
   }
@@ -1941,7 +1945,7 @@ fn rdo_partition_simple<T: Pixel, W: Writer>(
 ///
 /// - If the best RD found is negative.
 ///   This should never happen, and indicates a development error.
-#[hawktracer(rdo_partition_decision)]
+#[profiling::function]
 pub fn rdo_partition_decision<T: Pixel, W: Writer>(
   fi: &FrameInvariants<T>, ts: &mut TileStateMut<'_, T>,
   cw: &mut ContextWriter, w_pre_cdef: &mut W, w_post_cdef: &mut W,
@@ -2002,7 +2006,7 @@ pub fn rdo_partition_decision<T: Pixel, W: Writer>(
       if rd < best_rd {
         best_rd = rd;
         best_partition = partition;
-        best_pred_modes = child_modes.clone();
+        best_pred_modes.clone_from(&child_modes);
       }
     }
     cw.rollback(&cw_checkpoint);
@@ -2019,7 +2023,7 @@ pub fn rdo_partition_decision<T: Pixel, W: Writer>(
   }
 }
 
-#[hawktracer(rdo_loop_plane_error)]
+#[profiling::function]
 fn rdo_loop_plane_error<T: Pixel>(
   base_sbo: TileSuperBlockOffset, offset_sbo: TileSuperBlockOffset,
   sb_w: usize, sb_h: usize, fi: &FrameInvariants<T>, ts: &TileStateMut<'_, T>,
@@ -2096,7 +2100,7 @@ fn rdo_loop_plane_error<T: Pixel>(
 /// # Panics
 ///
 /// - If both CDEF and LRF are disabled.
-#[hawktracer(rdo_loop_decision)]
+#[profiling::function]
 pub fn rdo_loop_decision<T: Pixel, W: Writer>(
   base_sbo: TileSuperBlockOffset, fi: &FrameInvariants<T>,
   ts: &mut TileStateMut<'_, T>, cw: &mut ContextWriter, w: &mut W,
@@ -2426,7 +2430,7 @@ pub fn rdo_loop_decision<T: Pixel, W: Writer>(
               } {
                 // We have a valid LRU, apply LRF, compute error
                 match best_lrf[lru_y * lru_w[pli] + lru_x][pli] {
-                  RestorationFilter::None {} => {
+                  RestorationFilter::None => {
                     err += rdo_loop_plane_error(
                       base_sbo,
                       loop_sbo,

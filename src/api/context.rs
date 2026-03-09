@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -8,20 +8,19 @@
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 #![deny(missing_docs)]
 
+use std::fmt;
+use std::io;
+use std::sync::Arc;
+
+use bitstream_io::{BigEndian, BitWrite, BitWriter};
+
 use crate::api::color::*;
 use crate::api::config::*;
 use crate::api::internal::*;
 use crate::api::util::*;
-
-use bitstream_io::*;
-
 use crate::encoder::*;
 use crate::frame::*;
 use crate::util::Pixel;
-
-use std::fmt;
-use std::io;
-use std::sync::Arc;
 
 /// The encoder context.
 ///
@@ -29,7 +28,7 @@ use std::sync::Arc;
 pub struct Context<T: Pixel> {
   pub(crate) inner: ContextInner<T>,
   pub(crate) config: EncoderConfig,
-  pub(crate) pool: Option<Arc<crate::rayon::ThreadPool>>,
+  pub(crate) pool: Option<Arc<rayon::ThreadPool>>,
   pub(crate) is_flushing: bool,
 }
 
@@ -122,8 +121,8 @@ impl<T: Pixel> Context<T> {
       || (self.inner.config.still_picture && self.inner.frame_count > 0)
     {
       return Err(EncoderStatus::EnoughData);
-    // The rate control can process at most std::i32::MAX frames
-    } else if self.inner.frame_count == std::i32::MAX as u64 - 1 {
+    // The rate control can process at most i32::MAX frames
+    } else if self.inner.frame_count == i32::MAX as u64 - 1 {
       self.inner.limit = Some(self.inner.frame_count);
       self.is_flushing = true;
     }
@@ -346,20 +345,20 @@ impl<T: Pixel> Context<T> {
       {
         let mut bw = BitWriter::endian(&mut buf, BigEndian);
         bw.write_bit(true)?; // marker
-        bw.write(7, 1)?; // version
-        bw.write(3, seq.profile)?;
-        bw.write(5, 31)?; // level
+        bw.write::<7, u8>(1)?; // version
+        bw.write::<3, u8>(seq.profile)?;
+        bw.write::<5, u8>(31)?; // level
         bw.write_bit(false)?; // tier
         bw.write_bit(seq.bit_depth > 8)?; // high_bitdepth
         bw.write_bit(seq.bit_depth == 12)?; // twelve_bit
         bw.write_bit(seq.chroma_sampling == ChromaSampling::Cs400)?; // monochrome
         bw.write_bit(seq.chroma_sampling != ChromaSampling::Cs444)?; // chroma_subsampling_x
         bw.write_bit(seq.chroma_sampling == ChromaSampling::Cs420)?; // chroma_subsampling_y
-        bw.write(2, 0)?; // chroma_sample_position
-        bw.write(3, 0)?; // reserved
+        bw.write::<2, u8>(0)?; // chroma_sample_position
+        bw.write::<3, u8>(0)?; // reserved
         bw.write_bit(false)?; // initial_presentation_delay_present
 
-        bw.write(4, 0)?; // reserved
+        bw.write::<4, u8>(0)?; // reserved
       }
 
       Ok(buf)

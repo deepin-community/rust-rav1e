@@ -12,7 +12,6 @@ use crate::rdo::DistortionScale;
 use crate::tiling::*;
 use crate::util::*;
 use itertools::izip;
-use rust_hawktracer::*;
 
 #[derive(Debug, Default, Clone)]
 pub struct ActivityMask {
@@ -20,7 +19,7 @@ pub struct ActivityMask {
 }
 
 impl ActivityMask {
-  #[hawktracer(ActivityMask_from_plane)]
+  #[profiling::function]
   pub fn from_plane<T: Pixel>(luma_plane: &Plane<T>) -> ActivityMask {
     let PlaneConfig { width, height, .. } = luma_plane.cfg;
 
@@ -55,7 +54,7 @@ impl ActivityMask {
     ActivityMask { variances: variances.into_boxed_slice() }
   }
 
-  #[hawktracer(ActivityMask_fill_scales)]
+  #[profiling::function]
   pub fn fill_scales(
     &self, bit_depth: usize, activity_scales: &mut Box<[DistortionScale]>,
   ) {
@@ -107,11 +106,11 @@ struct RsqrtOutput {
 }
 
 /// Fixed point `rsqrt` for `ssim_boost`
-fn ssim_boost_rsqrt(x: u64) -> RsqrtOutput {
+const fn ssim_boost_rsqrt(x: u64) -> RsqrtOutput {
   const INSHIFT: u8 = 16;
   const OUTSHIFT: u8 = 14;
 
-  let k = ((ILog::ilog(x) - 1) >> 1) as i16;
+  let k = (x.ilog2() >> 1) as i16;
   /*t is x in the range [0.25, 1) in QINSHIFT, or x*2^(-s).
   Shift by log2(x) - log2(0.25*(1 << INSHIFT)) to ensure 0.25 lower bound.*/
   let s: i16 = 2 * k - (INSHIFT as i16 - 2);
@@ -141,7 +140,7 @@ fn ssim_boost_rsqrt(x: u64) -> RsqrtOutput {
   Coefficients here, and the final result r, are Q14. */
   let rsqrt: i32 = 23557 + mult16_16_q15(n, -13490 + mult16_16_q15(n, 6711));
 
-  debug_assert!((16384..32768).contains(&rsqrt));
+  debug_assert!(16384 <= rsqrt && rsqrt < 32768);
   RsqrtOutput { norm: rsqrt as u16, shift: rsqrt_shift }
 }
 
@@ -157,7 +156,7 @@ pub fn ssim_boost(svar: u32, dvar: u32, bit_depth: usize) -> DistortionScale {
 
 /// Apply ssim boost to a given input
 #[inline(always)]
-pub fn apply_ssim_boost(
+pub const fn apply_ssim_boost(
   input: u32, svar: u32, dvar: u32, bit_depth: usize,
 ) -> u32 {
   let coeff_shift = bit_depth - 8;
@@ -215,13 +214,13 @@ mod ssim_boost_tests {
     const C3: f64 = 12338f64;
     const RATIO: f64 = C1 / C3;
 
-    RATIO * (svar + dvar + C2) / f64::sqrt(C1 * C1 + svar * dvar)
+    RATIO * (svar + dvar + C2) / f64::sqrt(C1.mul_add(C1, svar * dvar))
   }
 
   /// Test that `ssim_boost` has sufficient accuracy.
   #[test]
   fn accuracy_test() {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let mut max_relative_error = 0f64;
     let bd = 12;
@@ -230,8 +229,8 @@ mod ssim_boost_tests {
     // Each scale is tested multiple times with randomized variances.
     for scale in 0..(bd + 3 * 2 - 2) {
       for _ in 0..40 {
-        let svar = rng.gen_range(0..(1 << scale));
-        let dvar = rng.gen_range(0..(1 << scale));
+        let svar = rng.random_range(0..(1 << scale));
+        let dvar = rng.random_range(0..(1 << scale));
 
         let float = reference_ssim_boost(svar, dvar, 12);
         let fixed =

@@ -10,11 +10,11 @@ use crate::frame::{AsRegion, PlaneOffset};
 use crate::me::{estimate_tile_motion, RefMEStats};
 use crate::partition::{get_intra_edges, BlockSize};
 use crate::predict::{IntraParam, PredictionMode};
-use crate::rayon::iter::*;
 use crate::tiling::{Area, PlaneRegion, TileRect};
 use crate::transform::TxSize;
+use crate::util::Aligned;
 use crate::Pixel;
-use rust_hawktracer::*;
+use rayon::iter::*;
 use std::sync::Arc;
 use v_frame::frame::Frame;
 use v_frame::pixel::CastFromPrimitive;
@@ -26,7 +26,7 @@ pub(crate) const IMP_BLOCK_SIZE_IN_MV_UNITS: i64 =
 pub(crate) const IMP_BLOCK_AREA_IN_MV_UNITS: i64 =
   IMP_BLOCK_SIZE_IN_MV_UNITS * IMP_BLOCK_SIZE_IN_MV_UNITS;
 
-#[hawktracer(estimate_intra_costs)]
+#[profiling::function]
 pub(crate) fn estimate_intra_costs<T: Pixel>(
   temp_plane: &mut Plane<T>, frame: &Frame<T>, bit_depth: usize,
   cpu_feature_level: CpuFeatureLevel,
@@ -54,7 +54,9 @@ pub(crate) fn estimate_intra_costs<T: Pixel>(
       });
 
       // TODO: other intra prediction modes.
+      let mut edge_buf = Aligned::uninit_array();
       let edge_buf = get_intra_edges(
+        &mut edge_buf,
         &plane.as_region(),
         TileBlockOffset(BlockOffset { x, y }),
         0,
@@ -120,7 +122,7 @@ pub(crate) fn estimate_intra_costs<T: Pixel>(
   intra_costs.into_boxed_slice()
 }
 
-#[hawktracer(estimate_importance_block_difference)]
+#[profiling::function]
 pub(crate) fn estimate_importance_block_difference<T: Pixel>(
   frame: Arc<Frame<T>>, ref_frame: Arc<Frame<T>>,
 ) -> f64 {
@@ -176,7 +178,7 @@ pub(crate) fn estimate_importance_block_difference<T: Pixel>(
   imp_block_costs as f64 / (w_in_imp_b * h_in_imp_b) as f64
 }
 
-#[hawktracer(estimate_inter_costs)]
+#[profiling::function]
 pub(crate) fn estimate_inter_costs<T: Pixel>(
   frame: Arc<Frame<T>>, ref_frame: Arc<Frame<T>>, bit_depth: usize,
   mut config: EncoderConfig, sequence: Arc<Sequence>, buffer: RefMEStats,
@@ -265,7 +267,7 @@ pub(crate) fn estimate_inter_costs<T: Pixel>(
   inter_costs as f64 / (w_in_imp_b * h_in_imp_b) as f64
 }
 
-#[hawktracer(compute_motion_vectors)]
+#[profiling::function]
 pub(crate) fn compute_motion_vectors<T: Pixel>(
   fi: &mut FrameInvariants<T>, fs: &mut FrameState<T>, inter_cfg: &InterConfig,
 ) {

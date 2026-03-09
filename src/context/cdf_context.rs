@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -550,7 +550,7 @@ impl CDFContext {
   ) -> CDFOffset<CDF_LEN> {
     CDFOffset {
       offset: cdf as usize - self as *const _ as usize,
-      phantom: PhantomData::default(),
+      phantom: PhantomData,
     }
   }
 }

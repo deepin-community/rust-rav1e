@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -16,16 +16,19 @@ use crate::api::util::*;
 use crossbeam::channel::*;
 
 use crate::rate::RCState;
-use crate::rayon::ThreadPool;
 use crate::util::Pixel;
 
+use rayon::ThreadPool;
 use std::sync::Arc;
 
 mod data;
-pub use data::*;
+pub use data::{
+  FrameInput, FrameSender, PacketReceiver, PassDataChannel, RcDataReceiver,
+  RcDataSender, RecvError, SendError, TryRecvError, TrySendError,
+  VideoDataChannel,
+};
 
 mod by_gop;
-pub use by_gop::*;
 
 impl Config {
   pub(crate) fn setup<T: Pixel>(

@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -9,10 +9,7 @@
 
 use av_metrics::video::*;
 use rav1e::data::EncoderStats;
-use rav1e::prelude::Rational;
 use rav1e::prelude::*;
-use rav1e::{Packet, Pixel};
-use rust_hawktracer::*;
 use std::fmt;
 use std::time::Instant;
 
@@ -30,7 +27,7 @@ pub struct FrameSummary {
   pub enc_stats: EncoderStats,
 }
 
-#[hawktracer(build_frame_summary)]
+#[profiling::function]
 pub fn build_frame_summary<T: Pixel>(
   packets: Packet<T>, bit_depth: usize, chroma_sampling: ChromaSampling,
   metrics_cli: MetricsEnabled,
@@ -346,7 +343,7 @@ impl ProgressInfo {
     let avg_qp = self.get_frame_type_avg_qp(frame_type);
     info!(
       "{:17} {:>6} | avg QP: {:6.2} | avg size: {:>7} B",
-      format!("{}:", frame_type),
+      format!("{frame_type}:"),
       count,
       avg_qp,
       size
@@ -705,11 +702,11 @@ fn secs_to_human_time(mut secs: u64) -> String {
   let hours = mins / 60;
   mins %= 60;
   if hours > 0 {
-    format!("{}h {}m {}s", hours, mins, secs)
+    format!("{hours}h {mins}m {secs}s")
   } else if mins > 0 {
-    format!("{}m {}s", mins, secs)
+    format!("{mins}m {secs}s")
   } else {
-    format!("{}s", secs)
+    format!("{secs}s")
   }
 }
 
@@ -724,7 +721,7 @@ pub struct QualityMetrics {
   pub ssim: Option<PlanarMetrics>,
   /// Multi-Scale Structural Similarity
   pub ms_ssim: Option<PlanarMetrics>,
-  /// CIEDE 2000 color difference algorithm: https://en.wikipedia.org/wiki/Color_difference#CIEDE2000
+  /// CIEDE 2000 [color difference algorithm](https://en.wikipedia.org/wiki/Color_difference#CIEDE2000)
   pub ciede: Option<f64>,
   /// Aligned Peak Signal-to-Noise Ratio for Y, U, and V planes
   pub apsnr: Option<PlanarMetrics>,

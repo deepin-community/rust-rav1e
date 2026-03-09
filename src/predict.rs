@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -11,6 +11,8 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
+use std::mem::MaybeUninit;
+
 cfg_if::cfg_if! {
   if #[cfg(nasm_x86_64)] {
     pub use crate::asm::x86::predict::*;
@@ -21,6 +23,8 @@ cfg_if::cfg_if! {
   }
 }
 
+use aligned_vec::{avec, ABox};
+
 use crate::context::{TileBlockOffset, MAX_SB_SIZE_LOG2, MAX_TX_SIZE};
 use crate::cpu_features::CpuFeatureLevel;
 use crate::encoder::FrameInvariants;
@@ -30,7 +34,6 @@ use crate::partition::*;
 use crate::tiling::*;
 use crate::transform::*;
 use crate::util::*;
-use std::convert::TryInto;
 
 pub const ANGLE_STEP: i8 = 3;
 
@@ -68,9 +71,10 @@ pub static RAV1E_INTER_COMPOUND_MODES: &[PredictionMode] = &[
 
 // There are more modes than in the spec because every allowed
 // drl index for NEAR modes is considered its own mode.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
 pub enum PredictionMode {
-  DC_PRED,     // Average of above and left pixels
+  #[default]
+  DC_PRED, // Average of above and left pixels
   V_PRED,      // Vertical
   H_PRED,      // Horizontal
   D45_PRED,    // Directional 45  degree
@@ -128,13 +132,6 @@ impl PredictionVariant {
       (0, _) => PredictionVariant::TOP,
       _ => PredictionVariant::BOTH,
     }
-  }
-}
-
-impl Default for PredictionMode {
-  #[inline]
-  fn default() -> Self {
-    PredictionMode::DC_PRED
   }
 }
 
@@ -208,8 +205,8 @@ impl PredictionMode {
   pub fn predict_intra<T: Pixel>(
     self, tile_rect: TileRect, dst: &mut PlaneRegionMut<'_, T>,
     tx_size: TxSize, bit_depth: usize, ac: &[i16], intra_param: IntraParam,
-    ief_params: Option<IntraEdgeFilterParameters>,
-    edge_buf: &Aligned<[T; 4 * MAX_TX_SIZE + 1]>, cpu: CpuFeatureLevel,
+    ief_params: Option<IntraEdgeFilterParameters>, edge_buf: &IntraEdge<T>,
+    cpu: CpuFeatureLevel,
   ) {
     assert!(self.is_intra());
     let &Rect { x: frame_x, y: frame_y, .. } = dst.rect();
@@ -428,7 +425,7 @@ impl PredictionMode {
 /// compound inter prediction.
 #[derive(Debug)]
 pub struct InterCompoundBuffers {
-  data: AlignedBoxedSlice<i16>,
+  data: ABox<[i16]>,
 }
 
 impl InterCompoundBuffers {
@@ -457,7 +454,7 @@ impl InterCompoundBuffers {
 
 impl Default for InterCompoundBuffers {
   fn default() -> Self {
-    Self { data: AlignedBoxedSlice::new(2 * Self::BUFFER_SIZE, 0) }
+    Self { data: avec![0; 2 * Self::BUFFER_SIZE].into_boxed_slice() }
   }
 }
 
@@ -636,17 +633,27 @@ const fn get_scaled_luma_q0(alpha_q3: i16, ac_pred_q3: i16) -> i32 {
   }
 }
 
+/// # Returns
+///
+/// Initialized luma AC coefficients
+///
 /// # Panics
 ///
 /// - If the block size is invalid for subsampling
-pub fn luma_ac<T: Pixel>(
-  ac: &mut [i16], ts: &mut TileStateMut<'_, T>, tile_bo: TileBlockOffset,
-  bsize: BlockSize, tx_size: TxSize, fi: &FrameInvariants<T>,
-) {
+///
+pub fn luma_ac<'ac, T: Pixel>(
+  ac: &'ac mut [MaybeUninit<i16>], ts: &mut TileStateMut<'_, T>,
+  tile_bo: TileBlockOffset, bsize: BlockSize, tx_size: TxSize,
+  fi: &FrameInvariants<T>,
+) -> &'ac mut [i16] {
   use crate::context::MI_SIZE_LOG2;
 
   let PlaneConfig { xdec, ydec, .. } = ts.input.planes[1].cfg;
   let plane_bsize = bsize.subsampled_size(xdec, ydec).unwrap();
+
+  // ensure ac has the right length, so there aren't any uninitialized elements at the end
+  let ac = &mut ac[..plane_bsize.area()];
+
   let bo = if bsize.is_sub8x8(xdec, ydec) {
     let offset = bsize.sub8x8_offset(xdec, ydec);
     tile_bo.with_offset(offset.0, offset.1)
@@ -685,35 +692,32 @@ pub fn luma_ac<T: Pixel>(
     (1, 0) => pred_cfl_ac::<T, 1, 0>,
     (_, _) => pred_cfl_ac::<T, 1, 1>,
   })(ac, luma, plane_bsize, w_pad, h_pad, cpu);
+
+  // SAFETY: it relies on individual pred_cfl_ac implementations to initialize the ac
+  unsafe { slice_assume_init_mut(ac) }
 }
 
 pub(crate) mod rust {
   use super::*;
-  use crate::context::MAX_TX_SIZE;
-  use crate::cpu_features::CpuFeatureLevel;
-  use crate::tiling::PlaneRegionMut;
-  use crate::transform::TxSize;
-  use crate::util::{round_shift, Aligned};
-  use crate::Pixel;
-  use std::mem::{size_of, MaybeUninit};
+  use std::mem::size_of;
 
   #[inline(always)]
   pub fn dispatch_predict_intra<T: Pixel>(
     mode: PredictionMode, variant: PredictionVariant,
     dst: &mut PlaneRegionMut<'_, T>, tx_size: TxSize, bit_depth: usize,
     ac: &[i16], angle: isize, ief_params: Option<IntraEdgeFilterParameters>,
-    edge_buf: &Aligned<[T; 4 * MAX_TX_SIZE + 1]>, _cpu: CpuFeatureLevel,
+    edge_buf: &IntraEdge<T>, _cpu: CpuFeatureLevel,
   ) {
     let width = tx_size.width();
     let height = tx_size.height();
 
     // left pixels are ordered from bottom to top and right-aligned
-    let (left, not_left) = edge_buf.data.split_at(2 * MAX_TX_SIZE);
-    let (top_left, above) = not_left.split_at(1);
+    let (left, top_left, above) = edge_buf.as_slices();
 
-    let above_slice = &above[..width + height];
-    let left_slice = &left[2 * MAX_TX_SIZE - height..];
-    let left_and_left_below_slice = &left[2 * MAX_TX_SIZE - height - width..];
+    let above_slice = above;
+    let left_slice = &left[left.len().saturating_sub(height)..];
+    let left_and_left_below_slice =
+      &left[left.len().saturating_sub(width + height)..];
 
     match mode {
       PredictionMode::DC_PRED => {
@@ -1014,16 +1018,21 @@ pub(crate) mod rust {
   }
 
   pub(crate) fn pred_cfl_ac<T: Pixel, const XDEC: usize, const YDEC: usize>(
-    ac: &mut [i16], luma: &PlaneRegion<'_, T>, plane_bsize: BlockSize,
-    w_pad: usize, h_pad: usize, _cpu: CpuFeatureLevel,
+    ac: &mut [MaybeUninit<i16>], luma: &PlaneRegion<'_, T>,
+    plane_bsize: BlockSize, w_pad: usize, h_pad: usize, _cpu: CpuFeatureLevel,
   ) {
     let max_luma_w = (plane_bsize.width() - w_pad * 4) << XDEC;
     let max_luma_h = (plane_bsize.height() - h_pad * 4) << YDEC;
     let max_luma_x: usize = max_luma_w.max(8) - (1 << XDEC);
     let max_luma_y: usize = max_luma_h.max(8) - (1 << YDEC);
     let mut sum: i32 = 0;
-    for sub_y in 0..plane_bsize.height() {
-      for sub_x in 0..plane_bsize.width() {
+
+    let ac = &mut ac[..plane_bsize.area()];
+
+    for (sub_y, ac_rows) in
+      ac.chunks_exact_mut(plane_bsize.width()).enumerate()
+    {
+      for (sub_x, ac_item) in ac_rows.iter_mut().enumerate() {
         // Refer to https://aomediacodec.github.io/av1-spec/#predict-chroma-from-luma-process
         let luma_y = sub_y << YDEC;
         let luma_x = sub_x << XDEC;
@@ -1039,14 +1048,16 @@ pub(crate) mod rust {
             + i16::cast_from(luma[y + 1][x + 1]);
         }
         sample <<= 3 - XDEC - YDEC;
-        ac[sub_y * plane_bsize.width() + sub_x] = sample;
+        ac_item.write(sample);
         sum += sample as i32;
       }
     }
+    // SAFETY: the loop above has initialized all items
+    let ac = unsafe { slice_assume_init_mut(ac) };
     let shift = plane_bsize.width_log2() + plane_bsize.height_log2();
     let average = ((sum + (1 << (shift - 1))) >> shift) as i16;
 
-    for val in &mut ac[..(plane_bsize.height() * plane_bsize.width())] {
+    for val in ac {
       *val -= average;
     }
   }
@@ -1058,8 +1069,7 @@ pub(crate) mod rust {
     if alpha == 0 {
       return;
     }
-    assert!(32 >= width);
-    assert!(ac.len() >= 32 * (height - 1) + width);
+    debug_assert!(ac.len() >= width * height);
     assert!(output.plane_cfg.stride >= width);
     assert!(output.rows_iter().len() >= height);
 
@@ -1067,7 +1077,7 @@ pub(crate) mod rust {
     let avg: i32 = output[0][0].into();
 
     for (line, luma) in
-      output.rows_iter_mut().zip(ac.chunks(width)).take(height)
+      output.rows_iter_mut().zip(ac.chunks_exact(width)).take(height)
     {
       for (v, &l) in line[..width].iter_mut().zip(luma[..width].iter()) {
         *v = T::cast_from(
@@ -1288,7 +1298,6 @@ pub(crate) mod rust {
     }
   }
 
-  #[allow(clippy::clone_double_ref)]
   pub(crate) fn pred_directional<T: Pixel>(
     output: &mut PlaneRegionMut<'_, T>, above: &[T], left: &[T],
     top_left: &[T], p_angle: usize, width: usize, height: usize,
@@ -1322,8 +1331,10 @@ pub(crate) mod rust {
     );
 
     if enable_edge_filter {
-      above_filtered[1..=above.len()].clone_from_slice(above);
-      for i in 1..=left.len() {
+      let above_len = above.len().min(above_filtered.len() - 1);
+      let left_len = left.len().min(left_filtered.len() - 1);
+      above_filtered[1..=above_len].clone_from_slice(&above[..above_len]);
+      for i in 1..=left_len {
         left_filtered[i] = left[left.len() - i];
       }
 
@@ -1502,15 +1513,10 @@ mod test {
 
   #[test]
   fn pred_matches_u8() {
-    // SAFETY: We write to the array below before reading from it.
-    let mut edge_buf: Aligned<[u8; 2 * MAX_TX_SIZE + 1]> =
-      unsafe { Aligned::uninitialized() };
-    for i in 0..edge_buf.data.len() {
-      edge_buf.data[i] = (i + 32).saturating_sub(MAX_TX_SIZE).as_();
-    }
-    let left = &edge_buf.data[MAX_TX_SIZE - 4..MAX_TX_SIZE];
-    let above = &edge_buf.data[MAX_TX_SIZE + 1..MAX_TX_SIZE + 5];
-    let top_left = edge_buf.data[MAX_TX_SIZE];
+    let edge_buf =
+      Aligned::from_fn(|i| (i + 32).saturating_sub(MAX_TX_SIZE * 2).as_());
+    let (all_left, top_left, above) = IntraEdge::mock(&edge_buf).as_slices();
+    let left = &all_left[all_left.len() - 4..];
 
     let mut output = Plane::from_slice(&[0u8; 4 * 4], 4);
 
@@ -1538,7 +1544,7 @@ mod test {
       [31, 31, 31, 31, 30, 30, 30, 30, 29, 29, 29, 29, 28, 28, 28, 28]
     );
 
-    pred_paeth(&mut output.as_region_mut(), above, left, top_left, 4, 4);
+    pred_paeth(&mut output.as_region_mut(), above, left, top_left[0], 4, 4);
     assert_eq!(
       &output.data[..],
       [32, 34, 35, 36, 30, 32, 32, 36, 29, 32, 32, 32, 28, 28, 32, 32]
@@ -1562,9 +1568,7 @@ mod test {
       [33, 34, 35, 36, 31, 31, 32, 33, 30, 30, 30, 31, 29, 30, 30, 30]
     );
 
-    let left = &edge_buf.data[MAX_TX_SIZE - 8..MAX_TX_SIZE];
-    let above = &edge_buf.data[MAX_TX_SIZE + 1..MAX_TX_SIZE + 9];
-    let top_left = &edge_buf.data[MAX_TX_SIZE..=MAX_TX_SIZE];
+    let left = &all_left[all_left.len() - 8..];
     let angles = [
       3, 6, 9, 14, 17, 20, 23, 26, 29, 32, 36, 39, 42, 45, 48, 51, 54, 58, 61,
       64, 67, 70, 73, 76, 81, 84, 87,

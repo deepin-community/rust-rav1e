@@ -1,0 +1,11 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -195,7 +195,7 @@
+ version = "2.0"
+ 
+ [dependencies.toml]
+-version = "0.8"
++version = "0.9"
+ optional = true
+ 
+ [dependencies.v_frame]

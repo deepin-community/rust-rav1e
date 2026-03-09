@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -50,6 +50,7 @@ pub mod consts {
 }
 
 pub const TX_TYPES: usize = 16;
+pub const TX_TYPES_PLUS_LL: usize = 17;
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub enum TxType {
@@ -69,6 +70,7 @@ pub enum TxType {
   H_ADST = 13,
   V_FLIPADST = 14,
   H_FLIPADST = 15,
+  WHT_WHT = 16,
 }
 
 impl TxType {
@@ -266,6 +268,12 @@ impl TxSize {
   pub const fn is_rect(self) -> bool {
     self.width_log2() != self.height_log2()
   }
+
+  /// Returns log2(width / height), e.g. `TX_16x4` -> log2(16 / 4) = 2
+  #[inline]
+  pub const fn rect_ratio_log2(self) -> i8 {
+    self.width_log2() as i8 - self.height_log2() as i8
+  }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]
@@ -282,13 +290,6 @@ pub enum TxSet {
   TX_SET_INTER_2, // TX_SET_DTT9_IDTX_1DDCT
   // Discrete Trig transforms w/ flip (9) + Identity (1) + 1D Hor/Ver (6)
   TX_SET_INTER_1, // TX_SET_ALL16
-}
-
-/// Utility function that returns the log of the ratio of the col and row sizes.
-#[inline]
-pub fn get_rect_tx_log_ratio(col: usize, row: usize) -> i8 {
-  debug_assert!(col > 0 && row > 0);
-  ILog::ilog(col) as i8 - ILog::ilog(row) as i8
 }
 
 // performs half a butterfly
@@ -335,6 +336,7 @@ enum TxType1D {
   ADST,
   FLIPADST,
   IDTX,
+  WHT,
 }
 
 const fn get_1d_tx_types(tx_type: TxType) -> (TxType1D, TxType1D) {
@@ -355,10 +357,11 @@ const fn get_1d_tx_types(tx_type: TxType) -> (TxType1D, TxType1D) {
     TxType::H_ADST => (TxType1D::IDTX, TxType1D::ADST),
     TxType::V_FLIPADST => (TxType1D::FLIPADST, TxType1D::IDTX),
     TxType::H_FLIPADST => (TxType1D::IDTX, TxType1D::FLIPADST),
+    TxType::WHT_WHT => (TxType1D::WHT, TxType1D::WHT),
   }
 }
 
-const VTX_TAB: [TxType1D; TX_TYPES] = [
+const VTX_TAB: [TxType1D; TX_TYPES_PLUS_LL] = [
   TxType1D::DCT,
   TxType1D::ADST,
   TxType1D::DCT,
@@ -375,9 +378,10 @@ const VTX_TAB: [TxType1D; TX_TYPES] = [
   TxType1D::IDTX,
   TxType1D::FLIPADST,
   TxType1D::IDTX,
+  TxType1D::WHT,
 ];
 
-const HTX_TAB: [TxType1D; TX_TYPES] = [
+const HTX_TAB: [TxType1D; TX_TYPES_PLUS_LL] = [
   TxType1D::DCT,
   TxType1D::DCT,
   TxType1D::ADST,
@@ -394,6 +398,7 @@ const HTX_TAB: [TxType1D; TX_TYPES] = [
   TxType1D::ADST,
   TxType1D::IDTX,
   TxType1D::FLIPADST,
+  TxType1D::WHT,
 ];
 
 #[inline]
@@ -419,6 +424,26 @@ pub fn get_valid_txfm_types(tx_size: TxSize) -> &'static [TxType] {
     &[DCT_DCT]
   } else if size_sq == TxSize::TX_32X32 {
     &[DCT_DCT, IDTX]
+  } else if size_sq == TxSize::TX_4X4 {
+    &[
+      DCT_DCT,
+      ADST_DCT,
+      DCT_ADST,
+      ADST_ADST,
+      FLIPADST_DCT,
+      DCT_FLIPADST,
+      FLIPADST_FLIPADST,
+      ADST_FLIPADST,
+      FLIPADST_ADST,
+      IDTX,
+      V_DCT,
+      H_DCT,
+      V_ADST,
+      H_ADST,
+      V_FLIPADST,
+      H_FLIPADST,
+      WHT_WHT,
+    ]
   } else {
     &[
       DCT_DCT,
@@ -449,6 +474,7 @@ mod test {
   use crate::cpu_features::CpuFeatureLevel;
   use crate::frame::*;
   use rand::random;
+  use std::mem::MaybeUninit;
 
   fn test_roundtrip<T: Pixel>(
     tx_size: TxSize, tx_type: TxType, tolerance: i16,
@@ -458,14 +484,13 @@ mod test {
     let coeff_area: usize = av1_get_coded_tx_size(tx_size).area();
     let mut src_storage = [T::cast_from(0); 64 * 64];
     let src = &mut src_storage[..tx_size.area()];
-    // dynamic allocation: test
     let mut dst = Plane::from_slice(
-      &vec![T::cast_from(0); tx_size.area()],
+      &[T::zero(); 64 * 64][..tx_size.area()],
       tx_size.width(),
     );
     let mut res_storage = [0i16; 64 * 64];
     let res = &mut res_storage[..tx_size.area()];
-    let mut freq_storage = [T::Coeff::cast_from(0); 64 * 64];
+    let mut freq_storage = [MaybeUninit::uninit(); 64 * 64];
     let freq = &mut freq_storage[..tx_size.area()];
     for ((r, s), d) in
       res.iter_mut().zip(src.iter_mut()).zip(dst.data.iter_mut())
@@ -475,10 +500,12 @@ mod test {
       *r = i16::cast_from(*s) - i16::cast_from(*d);
     }
     forward_transform(res, freq, tx_size.width(), tx_size, tx_type, 8, cpu);
+    // SAFETY: forward_transform initialized freq
+    let freq = unsafe { slice_assume_init_mut(freq) };
     inverse_transform_add(
       freq,
       &mut dst.as_region_mut(),
-      coeff_area,
+      coeff_area.try_into().unwrap(),
       tx_size,
       tx_type,
       8,
@@ -520,14 +547,13 @@ mod test {
         tx_size.width(),
         tx_size.height()
       );
-      assert!(
-        get_rect_tx_log_ratio(tx_size.width(), tx_size.height()) == expected
-      );
+      assert!(tx_size.rect_ratio_log2() == expected);
     }
   }
 
   fn roundtrips<T: Pixel>() {
     let combinations = [
+      (TX_4X4, WHT_WHT, 0),
       (TX_4X4, DCT_DCT, 0),
       (TX_4X4, ADST_DCT, 0),
       (TX_4X4, DCT_ADST, 0),

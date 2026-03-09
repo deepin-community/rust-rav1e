@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2020, The rav1e contributors. All rights reserved
+// Copyright (c) 2018-2022, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -25,10 +25,32 @@ use crate::util::*;
 use super::clamp_value;
 use super::consts::*;
 use super::get_1d_tx_types;
-use super::get_rect_tx_log_ratio;
 use super::half_btf;
 use super::TxSize;
 use super::TxType;
+
+/// # Panics
+///
+/// - If `input` or `output` have fewer than 4 items.
+pub fn av1_iwht4(input: &[i32], output: &mut [i32], _range: usize) {
+  assert!(input.len() >= 4);
+  assert!(output.len() >= 4);
+
+  // <https://aomediacodec.github.io/av1-spec/#inverse-walsh-hadamard-transform-process>
+  let x0 = input[0];
+  let x1 = input[1];
+  let x2 = input[2];
+  let x3 = input[3];
+  let s0 = x0 + x1;
+  let s2 = x2 - x3;
+  let s4 = (s0 - s2) >> 1;
+  let s3 = s4 - x3;
+  let s1 = s4 - x1;
+  output[0] = s0 - s3;
+  output[1] = s3;
+  output[2] = s1;
+  output[3] = s2 + s1;
+}
 
 static COSPI_INV: [i32; 64] = [
   4096, 4095, 4091, 4085, 4076, 4065, 4052, 4036, 4017, 3996, 3973, 3948,
@@ -1568,7 +1590,7 @@ fn av1_idct64(input: &[i32], output: &mut [i32], range: usize) {
 
 type InvTxfmFn = fn(input: &[i32], output: &mut [i32], range: usize);
 
-static INV_TXFM_FNS: [[InvTxfmFn; 5]; 4] = [
+static INV_TXFM_FNS: [[InvTxfmFn; 5]; 5] = [
   [av1_idct4, av1_idct8, av1_idct16, av1_idct32, av1_idct64],
   [
     av1_iadst4,
@@ -1591,19 +1613,25 @@ static INV_TXFM_FNS: [[InvTxfmFn; 5]; 4] = [
     av1_iidentity32,
     |_, _, _| unimplemented!(),
   ],
+  [
+    av1_iwht4,
+    |_, _, _| unimplemented!(),
+    |_, _, _| unimplemented!(),
+    |_, _, _| unimplemented!(),
+    |_, _, _| unimplemented!(),
+  ],
 ];
 
 pub(crate) mod rust {
   use super::*;
   use crate::cpu_features::CpuFeatureLevel;
-  use crate::util::clamp;
 
   use simd_helpers::cold_for_target_arch;
   use std::cmp;
 
   #[cold_for_target_arch("x86_64", "aarch64")]
   pub fn inverse_transform_add<T: Pixel>(
-    input: &[T::Coeff], output: &mut PlaneRegionMut<'_, T>, _eob: usize,
+    input: &[T::Coeff], output: &mut PlaneRegionMut<'_, T>, _eob: u16,
     tx_size: TxSize, tx_type: TxType, bd: usize, _cpu: CpuFeatureLevel,
   ) {
     let width: usize = tx_size.width();
@@ -1615,12 +1643,14 @@ pub(crate) mod rust {
     // For 64 point transforms, rely on the last 32 columns being initialized
     //   to zero for filling out missing input coeffs.
     let mut buffer = vec![0i32; width * height].into_boxed_slice();
-    let rect_type = get_rect_tx_log_ratio(width, height);
+    let rect_type = tx_size.rect_ratio_log2();
     let tx_types_1d = get_1d_tx_types(tx_type);
+    let lossless = tx_type == TxType::WHT_WHT;
 
     // perform inv txfm on every row
     let range = bd + 8;
-    let txfm_fn = INV_TXFM_FNS[tx_types_1d.1 as usize][ILog::ilog(width) - 3];
+    let txfm_fn =
+      INV_TXFM_FNS[tx_types_1d.1 as usize][tx_size.width_log2() - 2];
     // 64 point transforms only signal 32 coeffs. We only take chunks of 32
     //   and skip over the last 32 transforms here.
     for (r, buffer_slice) in (0..height.min(32)).zip(buffer.chunks_mut(width))
@@ -1636,6 +1666,8 @@ pub(crate) mod rust {
       {
         let val = if rect_type.abs() == 1 {
           round_shift(raw * INV_SQRT2, SQRT2_BITS)
+        } else if lossless {
+          raw >> 2
         } else {
           raw
         };
@@ -1646,7 +1678,8 @@ pub(crate) mod rust {
 
     // perform inv txfm on every col
     let range = cmp::max(bd + 6, 16);
-    let txfm_fn = INV_TXFM_FNS[tx_types_1d.0 as usize][ILog::ilog(height) - 3];
+    let txfm_fn =
+      INV_TXFM_FNS[tx_types_1d.0 as usize][tx_size.height_log2() - 2];
     for c in 0..width {
       let mut temp_in: [i32; 64] = [0; 64];
       let mut temp_out: [i32; 64] = [0; 64];
@@ -1664,7 +1697,8 @@ pub(crate) mod rust {
         .zip(output.rows_iter_mut().map(|row| &mut row[c]).take(height))
       {
         let v: i32 = (*out).as_();
-        let v = clamp(v + round_shift(*temp, 4), 0, (1 << bd) - 1);
+        let r = if lossless { *temp } else { round_shift(*temp, 4) };
+        let v = clamp(v + r, 0, (1 << bd) - 1);
         *out = T::cast_from(v);
       }
     }

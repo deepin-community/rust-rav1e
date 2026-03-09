@@ -1,5 +1,5 @@
 // Copyright (c) 2001-2016, Alliance for Open Media. All rights reserved
-// Copyright (c) 2017-2021, The rav1e contributors. All rights reserved
+// Copyright (c) 2017-2023, The rav1e contributors. All rights reserved
 //
 // This source code is subject to the terms of the BSD 2 Clause License and
 // the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -38,6 +38,7 @@ use num_traits::cast::FromPrimitive;
 
 use scan_fmt::scan_fmt;
 
+use crate::api::SceneDetectionSpeed;
 use crate::prelude as rav1e;
 
 type PixelRange = rav1e::PixelRange;
@@ -397,8 +398,8 @@ pub unsafe extern fn rav1e_version_short() -> *const c_char {
   concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
 
-static FULL_VERSION_C: once_cell::sync::OnceCell<CString> =
-  once_cell::sync::OnceCell::new();
+static FULL_VERSION_C: std::sync::OnceLock<CString> =
+  std::sync::OnceLock::new();
 
 /// Version information with the information
 /// provided by `git describe --tags`.
@@ -718,6 +719,11 @@ unsafe fn option_match(
       enc.enable_timing_info = value.parse().map_err(|_| ())?
     }
     "still_picture" => enc.still_picture = value.parse().map_err(|_| ())?,
+    "no_scene_detection" => {
+      if value.parse::<bool>().map_err(|_| ())? {
+        enc.speed_settings.scene_detection_mode = SceneDetectionSpeed::None;
+      }
+    }
 
     "level" => {
       enc.level_idx = match value {
@@ -762,6 +768,7 @@ unsafe fn option_match(
 /// - `"low_latency"`: flag to enable low latency mode, default `false`
 /// - `"enable_timing_info"`: flag to enable signaling timing info in the bitstream, default `false`
 /// - `"still_picture"`: flag for still picture mode, default `false`
+/// - `"no_scene_detection"`: flag to disable scene detection, default `false`
 ///
 /// Return a negative value on error or 0.
 #[no_mangle]
@@ -787,6 +794,17 @@ pub unsafe extern fn rav1e_config_parse_int(
   cfg: *mut Config, key: *const c_char, value: c_int,
 ) -> c_int {
   let val = CString::new(value.to_string()).unwrap();
+  if option_match(cfg, key, val.as_ptr()) == Ok(()) {
+    0
+  } else {
+    config_parse_bool(cfg, key, value)
+  }
+}
+
+unsafe fn config_parse_bool(
+  cfg: *mut Config, key: *const c_char, value: c_int,
+) -> c_int {
+  let val = CString::new(if value != 0 { "true" } else { "false" }).unwrap();
   if option_match(cfg, key, val.as_ptr()) == Ok(()) {
     0
   } else {
